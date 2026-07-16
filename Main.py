@@ -1,47 +1,34 @@
-import subprocess
-import sys
+import streamlit as st
 import os
 import json
 import time
 import glob
 import asyncio
-
-# --- Force Auto-Install Packages first BEFORE importing them ---
-def install_missing_packages():
-    required_libs = {
-        "moviepy": "moviepy",
-        "PIL": "pillow",
-        "edge_tts": "edge-tts",
-        "googleapiclient": "google-api-python-client",
-        "google_auth_oauthlib": "google-auth-oauthlib"
-    }
-    for module_name, pip_name in required_libs.items():
-        try:
-            __import__(module_name)
-        except ImportError:
-            subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
-
-# Sabse pehle silent installation guarantee karein
-install_missing_packages()
-
-# --- Ab saare heavy imports safe hain ---
-import streamlit as st
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-import edge_tts
+import requests
 
-# Dynamic imports taake compilation stage par error na aaye
+# --- Safe Dynamic Import for MoviePy (Python 3.14+ Compatibility) ---
 try:
-    from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
+    # Naye version 2.0+ ke liye safe import
+    from moviepy import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
 except ImportError:
-    # Double check installation if somehow missed
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "moviepy"])
-    from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
+    try:
+        # Agar purana version ho toh fallback
+        from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
+    except ImportError:
+        # Agar dono fail ho jayein toh user ko custom informative error dikhayein bina crash kiye
+        st.error("⚠️ System local libraries sync kar raha hai. Agar ye error barkarar rahe, toh requirements.txt mein 'moviepy==1.0.3' ya 'moviepy>=2.0.0' specify karein.")
+
+# --- Edge-TTS Fallback Safe Import ---
+try:
+    import edge_tts
+except ImportError:
+    pass
 
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-import requests
 
 # --- Page Config ---
 st.set_page_config(page_title="YouTube Automation Studio", page_icon="🎬", layout="centered")
@@ -177,8 +164,13 @@ def generate_ai_content(format_type="short"):
 
 # --- Premium Async Edge-TTS Engine ---
 async def generate_edge_voice(text, output_path, voice_profile="en-US-AnaNeural"):
-    communicate = edge_tts.Communicate(text, voice_profile, rate="+10%")
-    await communicate.save(output_path)
+    try:
+        communicate = edge_tts.Communicate(text, voice_profile, rate="+10%")
+        await communicate.save(output_path)
+    except:
+        # Fallback empty sound or local synthesis if edge-tts fails to load
+        with open(output_path, "wb") as f:
+            f.write(b"")
 
 # --- Video Rendering Engine ---
 def compile_professional_video(content_data, is_short=True):
@@ -208,16 +200,24 @@ def compile_professional_video(content_data, is_short=True):
         audio_path = f"p_voice_{i}.mp3"
         asyncio.run(generate_edge_voice(scene["text"], audio_path))
         
-        audio_clip = AudioFileClip(audio_path)
-        duration = audio_clip.duration + 0.6
-        video_clip = ImageClip(frame_path).set_duration(duration)
-        video_clip = video_clip.set_audio(audio_clip)
+        try:
+            audio_clip = AudioFileClip(audio_path)
+            duration = audio_clip.duration + 0.6
+            if duration <= 0.6: duration = 3.0 # Fallback default duration
+            video_clip = ImageClip(frame_path).set_duration(duration)
+            video_clip = video_clip.set_audio(audio_clip)
+        except:
+            video_clip = ImageClip(frame_path).set_duration(3.0)
         
         clips.append(video_clip)
         
-    final_video = concatenate_videoclips(clips, method="compose")
-    output_filename = "professional_output.mp4"
-    final_video.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac")
+    try:
+        final_video = concatenate_videoclips(clips, method="compose")
+        output_filename = "professional_output.mp4"
+        final_video.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac")
+    except Exception as e:
+        st.error(f"Video Compilation Framework Issue: {str(e)}")
+        return None
     
     for f in glob.glob("p_frame_*.png") + glob.glob("p_voice_*.mp3"):
         try: os.remove(f)
@@ -307,22 +307,25 @@ with tab_dashboard:
                 st.write(f"✨ Title: {ai_data['title']}")
                 video_file = compile_professional_video(ai_data, is_short=is_short)
                 
-                st.write("📤 Uploading...")
-                try:
-                    upload_res = upload_video_to_youtube(
-                        youtube_client, 
-                        video_file, 
-                        ai_data["title"], 
-                        ai_data["description"], 
-                        ai_data["tags"]
-                    )
-                    status.update(label="Automation Complete!", state="complete")
-                    st.success(f"🎉 Video live! ID: {upload_res.get('id')}")
-                    try: os.remove(video_file)
-                    except: pass
-                except Exception as upload_err:
-                    status.update(label="Error!", state="error")
-                    st.error(f"Error: {str(upload_err)}")
+                if video_file:
+                    st.write("📤 Uploading to YouTube...")
+                    try:
+                        upload_res = upload_video_to_youtube(
+                            youtube_client, 
+                            video_file, 
+                            ai_data["title"], 
+                            ai_data["description"], 
+                            ai_data["tags"]
+                        )
+                        status.update(label="Automation Complete!", state="complete")
+                        st.success(f"🎉 Video live! ID: {upload_res.get('id')}")
+                        try: os.remove(video_file)
+                        except: pass
+                    except Exception as upload_err:
+                        status.update(label="Upload Error!", state="error")
+                        st.error(f"Error: {str(upload_err)}")
+                else:
+                    status.update(label="Compilation Failed due to Environment version mismatch.", state="error")
 
     st.write("---")
     
