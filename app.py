@@ -1,3 +1,25 @@
+import subprocess
+import sys
+
+# --- Force Auto-Install Packages if missing ---
+def install_missing_packages():
+    required_libs = {
+        "moviepy": "moviepy",
+        "PIL": "pillow",
+        "edge_tts": "edge-tts",
+        "googleapiclient": "google-api-python-client",
+        "google_auth_oauthlib": "google-auth-oauthlib"
+    }
+    for module_name, pip_name in required_libs.items():
+        try:
+            __import__(module_name)
+        except ImportError:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
+
+# Sabse pehle auto-install trigger hoga
+install_missing_packages()
+
+# --- Ab baaki ka code start hoga ---
 import streamlit as st
 import os
 import json
@@ -120,7 +142,6 @@ def generate_ai_content(format_type="short"):
     headers = {"Content-Type": "application/json"}
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     
-    # Custom Advanced Prompt for high engagement funny scripts
     prompt = f"""
     Generate a 4-scene highly engaging and funny nursery rhyme script or storytelling video for kids, optimized for YouTube {format_type}. 
     Provide response strictly as a JSON object with keys:
@@ -132,7 +153,6 @@ def generate_ai_content(format_type="short"):
     """
     
     if not api_key:
-        # High quality fallback
         return {
             "title": "Five Little Monkeys Jumping On The Bed (Funny Remake)",
             "description": "Fun animation for kids. #nurseryrhymes #kids #shorts",
@@ -155,11 +175,10 @@ def generate_ai_content(format_type="short"):
         cleaned_text = raw_text.replace("```json", "").replace("```", "").strip()
         return json.loads(cleaned_text)
     except:
-        return generate_ai_content(format_type="") # fallback triggers if error
+        return generate_ai_content(format_type="")
 
 # --- Premium Async Edge-TTS Engine ---
 async def generate_edge_voice(text, output_path, voice_profile="en-US-AnaNeural"):
-    # en-US-AnaNeural is a very clean and lively kids/young voice profile
     communicate = edge_tts.Communicate(text, voice_profile, rate="+10%")
     await communicate.save(output_path)
 
@@ -169,41 +188,34 @@ def compile_professional_video(content_data, is_short=True):
     size = (1080, 1920) if is_short else (1920, 1080)
     
     for i, scene in enumerate(content_data["scenes"]):
-        # 1. 2D Interactive Pillow Vector Rendering
         img = Image.new("RGB", size, color=scene["bg_color"])
         draw = ImageDraw.Draw(img)
-        
         cx, cy = size[0] // 2, size[1] // 2
         
-        # Render dynamic vector face shapes according to the AI action
-        draw.ellipse([cx-160, cy-160, cx+160, cy+160], fill="#ffde59", outline="#ff914d", width=12) # Head
-        draw.ellipse([cx-80, cy-60, cx-40, cy-20], fill="black")  # Left Eye
-        draw.ellipse([cx+40, cy-60, cx+80, cy-20], fill="black")  # Right Eye
+        draw.ellipse([cx-160, cy-160, cx+160, cy+160], fill="#ffde59", outline="#ff914d", width=12)
+        draw.ellipse([cx-80, cy-60, cx-40, cy-20], fill="black")
+        draw.ellipse([cx+40, cy-60, cx+80, cy-20], fill="black")
         
-        # Action Based Smile/Expression Vector
         action = scene.get("character_action", "laughing")
         if action == "crying":
-            draw.arc([cx-60, cy+60, cx+60, cy+120], start=180, end=360, fill="black", width=10) # Sad arc
-            draw.ellipse([cx-60, cy+20, cx-40, cy+60], fill="#3b82f6") # Tear Left
-            draw.ellipse([cx+40, cy+20, cx+60, cy+60], fill="#3b82f6") # Tear Right
+            draw.arc([cx-60, cy+60, cx+60, cy+120], start=180, end=360, fill="black", width=10)
+            draw.ellipse([cx-60, cy+20, cx-40, cy+60], fill="#3b82f6")
+            draw.ellipse([cx+40, cy+20, cx+60, cy+60], fill="#3b82f6")
         elif action == "jumping":
-            draw.arc([cx-60, cy+40, cx+60, cy+100], start=0, end=180, fill="black", width=10) # Big Smile
-            draw.ellipse([cx-200, cy-250, cx-120, cy-170], fill="#ff914d") # Ears jumping up
+            draw.arc([cx-60, cy+40, cx+60, cy+100], start=0, end=180, fill="black", width=10)
+            draw.ellipse([cx-200, cy-250, cx-120, cy-170], fill="#ff914d")
             draw.ellipse([cx+120, cy-250, cx+200, cy-170], fill="#ff914d")
         else:
-            draw.arc([cx-60, cy+40, cx+60, cy+100], start=0, end=180, fill="black", width=10) # Default Happy
+            draw.arc([cx-60, cy+40, cx+60, cy+100], start=0, end=180, fill="black", width=10)
             
-        # Draw subtitles text box area
         draw.rectangle([0, size[1]-300, size[0], size[1]-50], fill="rgba(0,0,0,120)")
         
         frame_path = f"p_frame_{i}.png"
         img.save(frame_path)
         
-        # 2. Premium Voice Generation via Async Edge-TTS
         audio_path = f"p_voice_{i}.mp3"
         asyncio.run(generate_edge_voice(scene["text"], audio_path))
         
-        # 3. Audio & Video Syncing using MoviePy
         audio_clip = AudioFileClip(audio_path)
         duration = audio_clip.duration + 0.6
         video_clip = ImageClip(frame_path).set_duration(duration)
@@ -211,14 +223,10 @@ def compile_professional_video(content_data, is_short=True):
         
         clips.append(video_clip)
         
-    # Concatenate all dynamic processed clips
     final_video = concatenate_videoclips(clips, method="compose")
     output_filename = "professional_output.mp4"
-    
-    # Render with modern fast optimized configs
     final_video.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac")
     
-    # Clean temporary junk files completely
     for f in glob.glob("p_frame_*.png") + glob.glob("p_voice_*.mp3"):
         try: os.remove(f)
         except: pass
@@ -232,7 +240,7 @@ def upload_video_to_youtube(youtube, file_path, title, desc, tags):
             'title': title,
             'description': desc,
             'tags': tags.split(","),
-            'categoryId': '1' # Film & Animation
+            'categoryId': '1'
         },
         'status': {
             'privacyStatus': 'public',
@@ -330,7 +338,6 @@ with tab_dashboard:
 
     st.write("---")
     
-    # Real Live Stats Section
     col_stat1, col_stat2 = st.columns(2)
     with col_stat1:
         st.markdown(f'<div class="stat-card" style="border-left: 5px solid #ef4444;"><div class="stat-num" style="color: #ef4444;">{real_vids}</div><p style="color: #64748b; margin: 0; font-size: 14px;">Total Videos</p></div>', unsafe_allow_html=True)
@@ -339,7 +346,7 @@ with tab_dashboard:
     with col_stat2:
         st.markdown(f'<div class="stat-card" style="border-left: 5px solid #3b82f6;"><div class="stat-num" style="color: #3b82f6;">{real_views}</div><p style="color: #64748b; margin: 0; font-size: 14px;">Total Views</p></div>', unsafe_allow_html=True)
 
-# ==================== REMAINDER TABS FOR FULL FUNCTIONALITY ====================
+# ==================== OTHER TABS ====================
 with tab_research:
     st.subheader("🔍 Active Trend Monitor")
     st.info("Current Hot Topic: 'Lullaby Collection' - Growing by +9.7%")
