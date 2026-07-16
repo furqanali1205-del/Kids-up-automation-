@@ -7,4 +7,3 @@ pillow
 gTTS
 edge-tts
 numpy
-
