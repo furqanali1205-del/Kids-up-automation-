@@ -1,7 +1,12 @@
 import subprocess
 import sys
+import os
+import json
+import time
+import glob
+import asyncio
 
-# --- Force Auto-Install Packages if missing ---
+# --- Force Auto-Install Packages first BEFORE importing them ---
 def install_missing_packages():
     required_libs = {
         "moviepy": "moviepy",
@@ -16,28 +21,32 @@ def install_missing_packages():
         except ImportError:
             subprocess.check_call([sys.executable, "-m", "pip", "install", pip_name])
 
-# Sabse pehle auto-install trigger hoga
+# Sabse pehle silent installation guarantee karein
 install_missing_packages()
 
-# --- Ab baaki ka code start hoga ---
+# --- Ab saare heavy imports safe hain ---
 import streamlit as st
-import os
-import json
-import time
-import glob
-import asyncio
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import edge_tts
-from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
+
+# Dynamic imports taake compilation stage par error na aaye
+try:
+    from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
+except ImportError:
+    # Double check installation if somehow missed
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "moviepy"])
+    from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
+
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
+import requests
 
 # --- Page Config ---
 st.set_page_config(page_title="YouTube Automation Studio", page_icon="🎬", layout="centered")
 
-# --- Custom Premium CSS (Shogo Style) ---
+# --- Custom Premium CSS ---
 st.markdown("""
     <style>
     .main { background-color: #f8f9fa; color: #1e293b; }
@@ -76,21 +85,13 @@ st.markdown("""
         box-shadow: 0 1px 3px rgba(0,0,0,0.02);
     }
     .stat-num { font-size: 28px; font-weight: 800; margin-bottom: 2px; }
-    
-    .connection-box {
-        background-color: white;
-        border: 2px solid #3b82f6;
-        border-radius: 16px;
-        padding: 24px;
-        margin-bottom: 20px;
-    }
     </style>
 """, unsafe_allow_html=True)
 
 # --- Real YouTube API Authentication Helper ---
 def get_youtube_client():
     if "CLIENT_SECRETS_JSON" not in st.secrets:
-        st.error("❌ CLIENT_SECRETS_JSON secrets mein missing hai! Pehle Streamlit cloud settings mein add karein.")
+        st.error("❌ CLIENT_SECRETS_JSON secrets mein missing hai!")
         return None
         
     try:
@@ -118,7 +119,7 @@ def get_youtube_client():
         else:
             return build('youtube', 'v3', credentials=st.session_state.oauth_credentials)
     except Exception as e:
-        st.error(f"OAuth Initialization Error: {str(e)}")
+        st.error(f"OAuth Error: {str(e)}")
         return None
 
 # --- Real YouTube Stats Fetcher ---
@@ -143,20 +144,17 @@ def generate_ai_content(format_type="short"):
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     
     prompt = f"""
-    Generate a 4-scene highly engaging and funny nursery rhyme script or storytelling video for kids, optimized for YouTube {format_type}. 
+    Generate a 4-scene nursery rhyme script for kids, optimized for YouTube {format_type}. 
     Provide response strictly as a JSON object with keys:
-    'title' (high CTR optimized), 
-    'description' (with description and tags/hashtags), 
-    'tags' (comma-separated trending SEO tags), 
-    'scenes' (a list of 4 objects, each containing 'text' for narration/dialogues, 'bg_color' in HEX format like '#ff5577', and 'character_action' like 'jumping', 'crying', 'laughing', 'dancing').
+    'title', 'description', 'tags', 'scenes' (a list of 4 objects with 'text', 'bg_color' and 'character_action').
     Do not add markdown formatting or backticks around the JSON.
     """
     
     if not api_key:
         return {
             "title": "Five Little Monkeys Jumping On The Bed (Funny Remake)",
-            "description": "Fun animation for kids. #nurseryrhymes #kids #shorts",
-            "tags": "kids songs, nursery rhymes, funny monkey song, coco melon style",
+            "description": "Fun animation for kids. #nurseryrhymes",
+            "tags": "kids songs, nursery rhymes",
             "scenes": [
                 {"text": "Five little monkeys jumping on the bed!", "bg_color": "#ff6b6b", "character_action": "jumping"},
                 {"text": "One fell off and bumped his head!", "bg_color": "#4ecdc4", "character_action": "crying"},
@@ -182,7 +180,7 @@ async def generate_edge_voice(text, output_path, voice_profile="en-US-AnaNeural"
     communicate = edge_tts.Communicate(text, voice_profile, rate="+10%")
     await communicate.save(output_path)
 
-# --- Professional Video Rendering Engine ---
+# --- Video Rendering Engine ---
 def compile_professional_video(content_data, is_short=True):
     clips = []
     size = (1080, 1920) if is_short else (1920, 1080)
@@ -199,12 +197,6 @@ def compile_professional_video(content_data, is_short=True):
         action = scene.get("character_action", "laughing")
         if action == "crying":
             draw.arc([cx-60, cy+60, cx+60, cy+120], start=180, end=360, fill="black", width=10)
-            draw.ellipse([cx-60, cy+20, cx-40, cy+60], fill="#3b82f6")
-            draw.ellipse([cx+40, cy+20, cx+60, cy+60], fill="#3b82f6")
-        elif action == "jumping":
-            draw.arc([cx-60, cy+40, cx+60, cy+100], start=0, end=180, fill="black", width=10)
-            draw.ellipse([cx-200, cy-250, cx-120, cy-170], fill="#ff914d")
-            draw.ellipse([cx+120, cy-250, cx+200, cy-170], fill="#ff914d")
         else:
             draw.arc([cx-60, cy+40, cx+60, cy+100], start=0, end=180, fill="black", width=10)
             
@@ -305,20 +297,17 @@ with tab_dashboard:
     
     if st.button("▶ Run Full Pipeline Now"):
         if not youtube_client:
-            st.error("❌ Pehle upar diye gaye authentication button se log in karein!")
+            st.error("❌ Pehle login karein!")
         else:
             with st.status("Processing Advanced Video Automation Engine...", expanded=True) as status:
-                st.write("🤖 Gemini AI trending scripts aur micro SEO elements create kar raha hai...")
+                st.write("🤖 Script generate ho raha hai...")
                 is_short = video_format == "Shorts (Portrait)"
                 ai_data = generate_ai_content("short" if is_short else "long")
                 
-                st.write(f"✨ Title Generated: {ai_data['title']}")
-                
-                st.write("🎙️ Edge-TTS premium real-human kids voice sync ho rahi hai...")
-                st.write("🎨 Pillow Vector assets frame-by-frame combine ho rahe hain...")
+                st.write(f"✨ Title: {ai_data['title']}")
                 video_file = compile_professional_video(ai_data, is_short=is_short)
                 
-                st.write("📤 Real video compile ho chuki hai! YouTube Server pe transmission start ho gayi hai...")
+                st.write("📤 Uploading...")
                 try:
                     upload_res = upload_video_to_youtube(
                         youtube_client, 
@@ -327,14 +316,13 @@ with tab_dashboard:
                         ai_data["description"], 
                         ai_data["tags"]
                     )
-                    status.update(label="Automation Complete! Video is now 100% live on Channel!", state="complete")
-                    st.success(f"🎉 Mubarak ho! Real Video completely live ho gayi hai! Video ID: {upload_res.get('id')}")
-                    
+                    status.update(label="Automation Complete!", state="complete")
+                    st.success(f"🎉 Video live! ID: {upload_res.get('id')}")
                     try: os.remove(video_file)
                     except: pass
                 except Exception as upload_err:
-                    status.update(label="Pipeline Upload Error!", state="error")
-                    st.error(f"YouTube Engine Error: {str(upload_err)}")
+                    status.update(label="Error!", state="error")
+                    st.error(f"Error: {str(upload_err)}")
 
     st.write("---")
     
@@ -349,20 +337,15 @@ with tab_dashboard:
 # ==================== OTHER TABS ====================
 with tab_research:
     st.subheader("🔍 Active Trend Monitor")
-    st.info("Current Hot Topic: 'Lullaby Collection' - Growing by +9.7%")
 with tab_scripts:
-    st.subheader("📝 Live Script & SEO tags generator")
-    st.text_input("Current Generated Title:", "Five Little Monkeys Jumping On The Bed (Engaging & Funny Remake)")
+    st.subheader("📝 Live Script")
 with tab_voice:
-    st.subheader("🎙️ Dialect & Audio Settings")
-    st.selectbox("Narrator Voice Profile", ["Edge-TTS Human Premium Kids Voice (Active)", "Anime Character"])
+    st.subheader("🎙️ Voice Settings")
 with tab_videos:
     st.subheader("🎬 Video Render Status")
-    st.write("✅ Real Rendering Engines Synced Successfully.")
 with tab_schedule:
     st.subheader("📅 Auto Upload Log")
-    st.success("Ready for Auto-Upload System.")
 with tab_channel:
-    st.markdown("""<div class="connection-box"><h3 style="color: #2563eb !important; margin-top:0;">➕ Channel Management</h3>""", unsafe_allow_html=True)
-    st.write("OAuth System linked directly dynamically.")
+    st.markdown("""<div class="connection-box"><h3>➕ Channel Management</h3>""", unsafe_allow_html=True)
+    st.write("OAuth linked.")
     st.markdown("</div>", unsafe_allow_html=True)
