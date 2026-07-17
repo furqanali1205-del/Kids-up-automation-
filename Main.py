@@ -76,7 +76,7 @@ st.markdown("""
 def get_current_redirect_uri():
     return "https://mfiqppcjcdmnoxuec6anbm.streamlit.app/"
 
-# --- Handle OAuth 2.0 & YouTube Clients (Fixed Session State Crash) ---
+# --- Handle OAuth 2.0 & YouTube Clients (Session-State Locked) ---
 def handle_youtube_auth():
     if "CLIENT_SECRETS_JSON" not in st.secrets:
         st.error("❌ CLIENT_SECRETS_JSON secrets mein missing hai!")
@@ -88,7 +88,7 @@ def handle_youtube_auth():
         redirect_uri = get_current_redirect_uri()
         client_config["web"]["redirect_uris"] = [redirect_uri]
         
-        # Flow object ko lock kiya taake code_verifier refresh hone par change na ho
+        # State lock taake dynamic refresh hone par Google's verifier crash na kare
         if "oauth_flow" not in st.session_state:
             st.session_state.oauth_flow = Flow.from_client_config(
                 client_config,
@@ -108,6 +108,9 @@ def handle_youtube_auth():
                     st.session_state.oauth_flow.fetch_token(code=auth_code.strip())
                     st.session_state.oauth_credentials = st.session_state.oauth_flow.credentials
                     st.success("✅ Google Account successfully authorized!")
+                    
+                    # Cleanup flow taake memory clear ho jaye
+                    del st.session_state.oauth_flow
                     st.rerun()
                 except Exception as token_err:
                     st.error(f"❌ Token Fetch Error: {str(token_err)}. Please open the link again to get a fresh code.")
@@ -369,7 +372,7 @@ with tab_channel:
     st.subheader("⚙️ Channel Management")
     st.write("Apna Google account link karne ke liye niche diya gaya process follow karein:")
     
-    # Run active authorization only here!
+    # Run authorization ONLY inside this tab
     active_client = handle_youtube_auth()
     if active_client:
         st.success("✅ Aapka YouTube Channel fully authorized aur connected hai!")
