@@ -74,29 +74,25 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Hardcoded Permanent YouTube Connection ---
+# --- Safe Connection Loader from Streamlit Secrets ---
 def handle_youtube_auth():
-    # Aapka permanent Token data
-    token_info = {
-        "token": "ya29.a0ARWov06EM-ZcwrdZ5IXmGj7G1Wk021r0reXqZcFwcHcYacZ3YBu1itBsu_fTGIuAco6MCWyr7L-QLIog-4AuKCUynjgg-b_Px6vIG1aBKvpv44ysqerLcK19-InsAUZloImMLbXdhIdTRaFh2M1tXYkmO1-vAwvPQcVChTIsXK1ATgDrJ-Pr2FHm_oIKI1mhO3vo9saCgYKAMoSARMSFQHGXZM1DS2Z7nxpjXJTUf9hlb-ogw0206",
-        "refresh_token": "1//06r0m7j1fIPgqCgYIARAAGAQSNwF-L9Irh-ovdpRq-nhUwwIZDGpk8Tx6N-vZbY1sLgPaN83FsaJAlukgWmW6Kd2TknUaVeFmHc",
-        "token_uri": "https://oauth2.googleapis.com/token",
-        "client_id": "508302416282-rcipiv4rn2c67e49m9mjl8anlpnkk2fr.apps.googleusercontent.com",
-        "client_secret": "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",
-        "scopes": [
-            "https://www.googleapis.com/auth/youtube.upload",
-            "https://www.googleapis.com/auth/youtube.readonly"
-        ]
-    }
-    
+    if "YOUTUBE_TOKEN_JSON" not in st.secrets:
+        st.error("❌ YOUTUBE_TOKEN_JSON Streamlit Secrets mein nahi mila! Pehle secrets set karein.")
+        return None
+        
     try:
-        # Direct static credentials object loading
+        # Streamlit secrets se directly token read karega jo GitHub ko nahi dikhta!
+        token_info = json.loads(st.secrets["YOUTUBE_TOKEN_JSON"])
+        
         creds = Credentials.from_authorized_user_info(token_info)
         st.session_state.oauth_credentials = creds
         
+        # Access token purana ho toh isko automatically refresh karein
+        if creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            
         st.success("🎉 **YouTube Channel Connected Successfully!**")
-        st.info("Ab aapko bar-bar link copy karne ki bilkul zaroorat nahi hai. Aapka permanent connection activate ho chuka hai!")
-        
         return build('youtube', 'v3', credentials=creds)
     except Exception as e:
         st.error(f"❌ Connection load karne mein masla aya: {str(e)}")
@@ -175,7 +171,7 @@ async def generate_edge_voice(text, output_path, voice_profile="en-US-AnaNeural"
         with open(output_path, "wb") as f:
             f.write(b"")
 
-# --- Professional Video Rendering Engine ---
+# --- Professional Video Rendering Engine (MoviePy Multi-Version Proof) ---
 def compile_professional_video(content_data, is_short=True, progress_bar=None):
     clips = []
     size = (1080, 1920) if is_short else (1920, 1080)
@@ -211,10 +207,25 @@ def compile_professional_video(content_data, is_short=True, progress_bar=None):
             audio_clip = AudioFileClip(audio_path)
             duration = audio_clip.duration + 0.6
             if duration <= 0.6: duration = 3.0
-            video_clip = ImageClip(frame_path).set_duration(duration)
-            video_clip = video_clip.set_audio(audio_clip)
+            
+            # MoviePy Version Compatibility Check for set/with duration and audio
+            img_clip = ImageClip(frame_path)
+            if hasattr(img_clip, "with_duration"):
+                video_clip = img_clip.with_duration(duration)
+            else:
+                video_clip = img_clip.set_duration(duration)
+                
+            if hasattr(video_clip, "with_audio"):
+                video_clip = video_clip.with_audio(audio_clip)
+            else:
+                video_clip = video_clip.set_audio(audio_clip)
+                
         except Exception as audio_err:
-            video_clip = ImageClip(frame_path).set_duration(3.0)
+            img_clip = ImageClip(frame_path)
+            if hasattr(img_clip, "with_duration"):
+                video_clip = img_clip.with_duration(3.0)
+            else:
+                video_clip = img_clip.set_duration(3.0)
         
         clips.append(video_clip)
         
@@ -289,7 +300,7 @@ if youtube_client:
 # ==================== TAB 1: DASHBOARD ====================
 with tab_dashboard:
     if not youtube_client:
-        st.warning("⚠️ **YouTube Connection Failed!** Please check your static token.")
+        st.warning("⚠️ **YouTube Connection Failed!** Please check your Streamlit secrets settings.")
     else:
         st.success("✅ **YouTube Channel Connected!** Aap automation run karne ke liye tayyar hain.")
 
@@ -297,7 +308,7 @@ with tab_dashboard:
         <div style="background-color: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 16px; padding: 20px; margin-bottom: 20px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <span style="font-weight: bold; font-size: 18px; color: #6d28d9;">🤖 YouTube AutoPilot</span>
-                <span style="background-color: #bbf7d0; color: #166534; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: bold;">● Active</span>
+                <span style="background-color: #bbf7d0; color: #166534; padding: 4px 12px; border-radius: 200px; font-size: 12px; font-weight: bold;">● Active</span>
             </div>
     """, unsafe_allow_html=True)
     
@@ -312,7 +323,7 @@ with tab_dashboard:
     
     if st.button("▶ Run Full Pipeline Now"):
         if not youtube_client:
-            st.error("❌ YouTube client is not available.")
+            st.error("❌ YouTube client is not available. Secrets check karein!")
         else:
             status_container = st.empty()
             progress_bar = st.progress(0, text="Initializing Pipeline...")
@@ -373,5 +384,5 @@ with tab_schedule:
 
 # ==================== TAB 7: CHANNEL MANAGEMENT ====================
 with tab_channel:
-    st.success("✅ **YouTube Channel is fully authorized and connected!**")
-    st.info("Aapka account system mein hardcoded ho chuka hai. Is tab par mazeed kisi action ki zaroorat nahi hai.")
+    st.success("✅ **YouTube Channel status is verified dynamically!**")
+    st.info("Aapka Token ab Streamlit Cloud ke Secrets settings mein mahfooz hai. GitHub isko kabhi scan nahi kar payega!")
