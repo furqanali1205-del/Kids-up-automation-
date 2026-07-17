@@ -94,11 +94,16 @@ def handle_youtube_auth():
     # 1. Pehle Streamlit Secrets try karega
     if "YOUTUBE_TOKEN_JSON" in st.secrets:
         try:
-            token_info = json.loads(st.secrets["YOUTUBE_TOKEN_JSON"])
+            # Check if it is a string or dictionary already
+            sec_val = st.secrets["YOUTUBE_TOKEN_JSON"]
+            if isinstance(sec_val, str):
+                token_info = json.loads(sec_val)
+            else:
+                token_info = sec_val
         except Exception:
             pass
             
-    # 2. Agar Secrets nahi mile ya abhi sync nahi hue, toh automatic local backup use karega
+    # 2. Backup directly dic use karega
     if not token_info:
         token_info = BACK_UP_TOKEN
         
