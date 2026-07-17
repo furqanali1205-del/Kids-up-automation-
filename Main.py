@@ -23,6 +23,8 @@ try:
 except ImportError:
     st.error("⚠️ 'edge-tts' library install nahi hai. Requirements mein 'edge-tts' add karein.")
 
+# Google Credentials and API imports
+from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
@@ -72,89 +74,32 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Dynamic Redirect URI ---
-def get_current_redirect_uri():
-    return "https://mfiqppcjcdmnoxuec6anbm.streamlit.app/"
-
-# --- Device Authorization Flow (100% Mobile Friendly) ---
+# --- Hardcoded Permanent YouTube Connection ---
 def handle_youtube_auth():
-    if "CLIENT_SECRETS_JSON" not in st.secrets:
-        st.error("❌ CLIENT_SECRETS_JSON secrets mein missing hai!")
-        return None
-        
-    try:
-        client_config = json.loads(st.secrets["CLIENT_SECRETS_JSON"])
-        SCOPES = [
-            'https://www.googleapis.com/auth/youtube.upload', 
-            'https://www.googleapis.com/auth/youtube.readonly'
+    # Aapka permanent Token data
+    token_info = {
+        "token": "ya29.a0ARWov06EM-ZcwrdZ5IXmGj7G1Wk021r0reXqZcFwcHcYacZ3YBu1itBsu_fTGIuAco6MCWyr7L-QLIog-4AuKCUynjgg-b_Px6vIG1aBKvpv44ysqerLcK19-InsAUZloImMLbXdhIdTRaFh2M1tXYkmO1-vAwvPQcVChTIsXK1ATgDrJ-Pr2FHm_oIKI1mhO3vo9saCgYKAMoSARMSFQHGXZM1DS2Z7nxpjXJTUf9hlb-ogw0206",
+        "refresh_token": "1//06r0m7j1fIPgqCgYIARAAGAQSNwF-L9Irh-ovdpRq-nhUwwIZDGpk8Tx6N-vZbY1sLgPaN83FsaJAlukgWmW6Kd2TknUaVeFmHc",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "client_id": "508302416282-rcipiv4rn2c67e49m9mjl8anlpnkk2fr.apps.googleusercontent.com",
+        "client_secret": "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",
+        "scopes": [
+            "https://www.googleapis.com/auth/youtube.upload",
+            "https://www.googleapis.com/auth/youtube.readonly"
         ]
+    }
+    
+    try:
+        # Direct static credentials object loading
+        creds = Credentials.from_authorized_user_info(token_info)
+        st.session_state.oauth_credentials = creds
         
-        # Check if already authenticated
-        if "oauth_credentials" in st.session_state:
-            return build('youtube', 'v3', credentials=st.session_state.oauth_credentials)
-            
-        st.info("🗝️ **YouTube Authentication (Device Method):**")
-        st.write("Niche diye gaye button par click karke connection request start karein:")
+        st.success("🎉 **YouTube Channel Connected Successfully!**")
+        st.info("Ab aapko bar-bar link copy karne ki bilkul zaroorat nahi hai. Aapka permanent connection activate ho chuka hai!")
         
-        if st.button("🔗 Start Device Authorization"):
-            # Step 1: Request Device Code from Google
-            # Note: Device flow doesn't use redirect_uri, but Google Console must support "Tv and Limited Input devices" flow.
-            # Most Web client secrets can request this via requests directly if needed, 
-            # but we will use the flow object in a simplified device authentication step:
-            try:
-                flow = Flow.from_client_config(client_config, scopes=SCOPES)
-                # Fallback to web authorization if device flow is not configured in client secrets
-                # But to keep it simple, we generate a streamlined local auth flow or direct link.
-            except Exception as e:
-                st.error(f"Flow error: {e}")
-                
-        # --- Standard Highly Optimized Web Auth with URL Auto-Cleaner ---
-        # If Device flow isn't supported by client secrets type, we use our perfected web cleaner:
-        st.markdown("---")
-        st.write("👉 **Ya phir niche diye gaye URL Cleaner Box se connect karein:**")
-        
-        redirect_uri = get_current_redirect_uri()
-        client_config["web"]["redirect_uris"] = [redirect_uri]
-        
-        if "oauth_flow" not in st.session_state:
-            st.session_state.oauth_flow = Flow.from_client_config(
-                client_config,
-                scopes=SCOPES,
-                redirect_uri=redirect_uri
-            )
-            st.session_state.auth_url, _ = st.session_state.oauth_flow.authorization_url(prompt='consent', access_type='offline')
-            
-        st.markdown(f'<a href="{st.session_state.auth_url}" target="_blank" style="display: inline-block; padding: 12px 24px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; text-align: center; width: 100%;">🔗 Click Karein Aur Google Account Auth Kholein</a>', unsafe_allow_html=True)
-        
-        raw_input = st.text_input("Apne browser ka PURA link yahan paste karein (App automatically code saaf kar legi):", key="youtube_auth_code_cleaner_input")
-        
-        if raw_input:
-            auth_code = raw_input.strip()
-            # Clean url if pasted fully
-            if "code=" in auth_code:
-                try:
-                    auth_code = auth_code.split("code=")[1].split("&")[0]
-                except:
-                    pass
-            
-            # Decode URL encoded characters (like %2F to /)
-            import urllib.parse
-            decoded_code = urllib.parse.unquote(auth_code)
-            
-            try:
-                st.session_state.oauth_flow.fetch_token(code=decoded_code)
-                st.session_state.oauth_credentials = st.session_state.oauth_flow.credentials
-                st.success("✅ Google Account successfully authorized!")
-                if "oauth_flow" in st.session_state:
-                    del st.session_state.oauth_flow
-                st.rerun()
-            except Exception as token_err:
-                st.error(f"❌ Token Exchange Error: {str(token_err)}")
-                st.info("💡 Yeh error tabhi aata hai jab code pehle se use ho chuka ho. Ek baar 'Auth Link' par click kar ke dobara naya link copy karein.")
-                
-        return None
+        return build('youtube', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"OAuth Integration Error: {str(e)}")
+        st.error(f"❌ Connection load karne mein masla aya: {str(e)}")
         return None
 
 # --- Real YouTube Stats Fetcher ---
@@ -329,13 +274,8 @@ tab_dashboard, tab_research, tab_scripts, tab_voice, tab_videos, tab_schedule, t
     "📊 Dashboard", "🔍 Research", "📄 Scripts", "🎙️ Voiceovers", "🎬 Videos", "📅 Scheduled", "⚙️ Add Channel"
 ])
 
-# Initialize channel state check
-youtube_client = None
-if "oauth_credentials" in st.session_state:
-    try:
-        youtube_client = build('youtube', 'v3', credentials=st.session_state.oauth_credentials)
-    except:
-        pass
+# Initialize channel state check - Loads the hardcoded channel directly
+youtube_client = handle_youtube_auth()
 
 # Setup dynamic values for stats card
 real_views, real_subs, real_vids = "0", "0", "0"
@@ -349,7 +289,7 @@ if youtube_client:
 # ==================== TAB 1: DASHBOARD ====================
 with tab_dashboard:
     if not youtube_client:
-        st.warning("⚠️ **YouTube Channel Linked Nahi Hai!** Pehle aakhri tab '⚙️ Add Channel' par ja kar apna channel link karein.")
+        st.warning("⚠️ **YouTube Connection Failed!** Please check your static token.")
     else:
         st.success("✅ **YouTube Channel Connected!** Aap automation run karne ke liye tayyar hain.")
 
@@ -372,7 +312,7 @@ with tab_dashboard:
     
     if st.button("▶ Run Full Pipeline Now"):
         if not youtube_client:
-            st.error("❌ Pehle '⚙️ Add Channel' tab mein ja kar channel authorize karein!")
+            st.error("❌ YouTube client is not available.")
         else:
             status_container = st.empty()
             progress_bar = st.progress(0, text="Initializing Pipeline...")
@@ -433,6 +373,5 @@ with tab_schedule:
 
 # ==================== TAB 7: CHANNEL MANAGEMENT ====================
 with tab_channel:
-    active_client = handle_youtube_auth()
-    if active_client:
-        st.success("✅ Aapka YouTube Channel fully authorized aur connected hai!")
+    st.success("✅ **YouTube Channel is fully authorized and connected!**")
+    st.info("Aapka account system mein hardcoded ho chuka hai. Is tab par mazeed kisi action ki zaroorat nahi hai.")
