@@ -74,8 +74,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Safe Backup Token Config ---
-BACK_UP_TOKEN = {
+# --- Token Configuration (Direct String) ---
+TOKEN_STRING = """{
   "token": "ya29.a0ARWov06EM-ZcwrdZ5IXmGj7G1Wk021r0reXqZcFwcHcYacZ3YBu1itBsu_fTGIuAco6MCWyr7L-QLIog-4AuKCUynjgg-b_Px6vIG1aBKvpv44ysqerLcK19-InsAUZloImMLbXdhIdTRaFh2M1tXYkmO1-vAwvPQcVChTIsXK1ATgDrJ-Pr2FHm_oIKI1mhO3vo9saCgYKAMoSARMSFQHGXZM1DS2Z7nxpjXJTUf9hlb-ogw0206",
   "refresh_token": "1//06r0m7j1fIPgqCgYIARAAGAQSNwF-L9Irh-ovdpRq-nhUwwIZDGpk8Tx6N-vZbY1sLgPaN83FsaJAlukgWmW6Kd2TknUaVeFmHc",
   "token_uri": "https://oauth2.googleapis.com/token",
@@ -85,41 +85,40 @@ BACK_UP_TOKEN = {
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.readonly"
   ]
-}
+}"""
 
-# --- Connection Loader with Auto-Failover ---
+# --- Direct Connection Handler ---
 def handle_youtube_auth():
-    token_info = None
-    
-    # 1. Pehle Streamlit Secrets try karega
-    if "YOUTUBE_TOKEN_JSON" in st.secrets:
-        try:
-            # Check if it is a string or dictionary already
-            sec_val = st.secrets["YOUTUBE_TOKEN_JSON"]
-            if isinstance(sec_val, str):
-                token_info = json.loads(sec_val)
-            else:
-                token_info = sec_val
-        except Exception:
-            pass
-            
-    # 2. Backup directly dic use karega
-    if not token_info:
-        token_info = BACK_UP_TOKEN
-        
     try:
+        # Streamlit secrets check (Agar user ne secrets configure kiya hai)
+        if "YOUTUBE_TOKEN_JSON" in st.secrets:
+            token_data = st.secrets["YOUTUBE_TOKEN_JSON"]
+            if isinstance(token_data, str):
+                token_info = json.loads(token_data)
+            else:
+                token_info = token_data
+        else:
+            token_info = json.loads(TOKEN_STRING)
+            
         creds = Credentials.from_authorized_user_info(token_info)
         st.session_state.oauth_credentials = creds
         
-        # Automatic Access Token Refresh
+        # Token Refresh Logic with direct call
         if creds.expired and creds.refresh_token:
             from google.auth.transport.requests import Request
             creds.refresh(Request())
             
         return build('youtube', 'v3', credentials=creds)
     except Exception as e:
-        st.error(f"❌ Connection Error: {str(e)}")
-        return None
+        # Koi bhi silent failure bypass karne ke liye back-up load
+        try:
+            token_info = json.loads(TOKEN_STRING)
+            creds = Credentials.from_authorized_user_info(token_info)
+            st.session_state.oauth_credentials = creds
+            return build('youtube', 'v3', credentials=creds)
+        except Exception as backup_err:
+            st.error(f"❌ Autopilot Connection Block: {str(backup_err)}")
+            return None
 
 # --- Real YouTube Stats Fetcher ---
 def fetch_real_stats(youtube):
@@ -307,7 +306,7 @@ tab_dashboard, tab_research, tab_scripts, tab_voice, tab_videos, tab_schedule, t
     "📊 Dashboard", "🔍 Research", "📄 Scripts", "🎙️ Voiceovers", "🎬 Videos", "📅 Scheduled", "⚙️ Add Channel"
 ])
 
-# Try connection instantly (Fallback active)
+# Try connection instantly (Simplified flow)
 youtube_client = handle_youtube_auth()
 
 real_views, real_subs, real_vids = "0", "0", "0"
@@ -321,7 +320,7 @@ if youtube_client:
 # ==================== TAB 1: DASHBOARD ====================
 with tab_dashboard:
     if not youtube_client:
-        st.error("⚠️ **Connection Timeout!** Please check setup.")
+        st.warning("⚠️ **Channel Connection Blocked!** Check authorization on local credentials.")
     else:
         st.success("🎉 **YouTube Channel Connected!** Ready to run automation.")
 
@@ -344,7 +343,7 @@ with tab_dashboard:
     
     if st.button("▶ Run Full Pipeline Now"):
         if not youtube_client:
-            st.error("❌ Connection failed. Check network latency.")
+            st.error("❌ Action stopped. YouTube client could not authorize.")
         else:
             status_container = st.empty()
             progress_bar = st.progress(0, text="Initializing Pipeline...")
