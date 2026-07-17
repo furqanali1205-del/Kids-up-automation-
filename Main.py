@@ -21,7 +21,7 @@ except ImportError:
 try:
     import edge_tts
 except ImportError:
-    pass
+    st.error("⚠️ 'edge-tts' library install nahi hai. Requirements mein 'edge-tts' add karein.")
 
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
@@ -76,7 +76,7 @@ st.markdown("""
 def get_current_redirect_uri():
     return "https://mfiqppcjcdmnoxuec6anbm.streamlit.app/"
 
-# --- Handle OAuth 2.0 & YouTube Clients (Session-State Locked) ---
+# --- Handle OAuth 2.0 & YouTube Clients (Session-State Locked & Mobile Friendly) ---
 def handle_youtube_auth():
     if "CLIENT_SECRETS_JSON" not in st.secrets:
         st.error("❌ CLIENT_SECRETS_JSON secrets mein missing hai!")
@@ -99,18 +99,29 @@ def handle_youtube_auth():
 
         if "oauth_credentials" not in st.session_state:
             st.info("🗝️ **YouTube Authentication Required:**")
-            st.write("Neeche diye gaye blue button par click karke permissions allow karein aur aakhri page ke browser URL se code copy karein.")
+            st.write("Neeche diye gaye blue button par click karke permissions allow karein. Uske baad aakhri page ka **Pura Browser URL (Link)** copy karke neeche paste karein.")
             st.markdown(f'<a href="{st.session_state.auth_url}" target="_blank" style="display: inline-block; padding: 12px 24px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; text-align: center; width: 100%;">🔗 Click Karein Aur Google Account Auth Link Kholein</a>', unsafe_allow_html=True)
             
-            auth_code = st.text_input("Naya authorization code yahan paste karein aur Enter dabayein:", key="youtube_auth_code_input")
-            if auth_code:
+            raw_input = st.text_input("Aakhri page ka PURA URL (Link) ya code yahan paste karein:", key="youtube_auth_code_input")
+            
+            if raw_input:
+                # Agar user ne pura URL paste kiya hai, toh extract karein
+                auth_code = raw_input.strip()
+                if "code=" in auth_code:
+                    try:
+                        auth_code = auth_code.split("code=")[1].split("&")[0]
+                    except Exception as parse_err:
+                        st.error(f"⚠️ URL parse karne mein masla hua: {parse_err}")
+                
                 try:
-                    st.session_state.oauth_flow.fetch_token(code=auth_code.strip())
+                    # Session state se flow use karte hue token fetch karein
+                    st.session_state.oauth_flow.fetch_token(code=requests.utils.unquote(auth_code))
                     st.session_state.oauth_credentials = st.session_state.oauth_flow.credentials
                     st.success("✅ Google Account successfully authorized!")
                     
-                    # Cleanup flow taake memory clear ho jaye
-                    del st.session_state.oauth_flow
+                    # Flow delete karein taake memory clean rahe
+                    if "oauth_flow" in st.session_state:
+                        del st.session_state.oauth_flow
                     st.rerun()
                 except Exception as token_err:
                     st.error(f"❌ Token Fetch Error: {str(token_err)}. Please open the link again to get a fresh code.")
@@ -133,7 +144,7 @@ def fetch_real_stats(youtube):
                 "subs": stats.get("subscriberCount", "0"),
                 "videos": stats.get("videoCount", "0")
             }
-    except:
+    except Exception as e:
         pass
     return None
 
@@ -150,6 +161,7 @@ def generate_ai_content(format_type="short"):
     """
     
     if not api_key:
+        # Fallback offline values agar key na ho
         return {
             "title": "Five Little Monkeys Jumping On The Bed (Funny Remake)",
             "description": "Fun animation for kids. #nurseryrhymes",
@@ -171,19 +183,32 @@ def generate_ai_content(format_type="short"):
         raw_text = res_json['candidates'][0]['content']['parts'][0]['text']
         cleaned_text = raw_text.replace("```json", "").replace("```", "").strip()
         return json.loads(cleaned_text)
-    except:
-        return generate_ai_content(format_type="")
+    except Exception as e:
+        # Backup call back if API rate-limited
+        return {
+            "title": "Five Little Monkeys Jumping On The Bed (Funny Remake)",
+            "description": "Fun animation for kids. #nurseryrhymes",
+            "tags": "kids songs, nursery rhymes",
+            "scenes": [
+                {"text": "Five little monkeys jumping on the bed!", "bg_color": "#ff6b6b", "character_action": "jumping"},
+                {"text": "One fell off and bumped his head!", "bg_color": "#4ecdc4", "character_action": "crying"},
+                {"text": "Mama called the doctor and the doctor said,", "bg_color": "#ffe66d", "character_action": "laughing"},
+                {"text": "No more monkeys jumping on the bed!", "bg_color": "#1a535c", "character_action": "dancing"}
+            ]
+        }
 
 # --- Premium Async Edge-TTS Engine ---
 async def generate_edge_voice(text, output_path, voice_profile="en-US-AnaNeural"):
     try:
         communicate = edge_tts.Communicate(text, voice_profile, rate="+10%")
         await communicate.save(output_path)
-    except:
+    except Exception as e:
+        st.error(f"Edge TTS Synthesis Error: {str(e)}")
+        # Generate clean empty file so code doesn't crash on sound mapping
         with open(output_path, "wb") as f:
             f.write(b"")
 
-# --- Video Rendering Engine ---
+# --- Professional Video Rendering Engine ---
 def compile_professional_video(content_data, is_short=True, progress_bar=None):
     clips = []
     size = (1080, 1920) if is_short else (1920, 1080)
@@ -196,6 +221,7 @@ def compile_professional_video(content_data, is_short=True, progress_bar=None):
         draw = ImageDraw.Draw(img)
         cx, cy = size[0] // 2, size[1] // 2
         
+        # 2D Kid Character Drawing
         draw.ellipse([cx-160, cy-160, cx+160, cy+160], fill="#ffde59", outline="#ff914d", width=12)
         draw.ellipse([cx-80, cy-60, cx-40, cy-20], fill="black")
         draw.ellipse([cx+40, cy-60, cx+80, cy-20], fill="black")
@@ -206,6 +232,7 @@ def compile_professional_video(content_data, is_short=True, progress_bar=None):
         else:
             draw.arc([cx-60, cy+40, cx+60, cy+100], start=0, end=180, fill="black", width=10)
             
+        # Subtitle overlay area
         draw.rectangle([0, size[1]-300, size[0], size[1]-50], fill="rgba(0,0,0,120)")
         
         frame_path = f"p_frame_{i}.png"
@@ -220,7 +247,7 @@ def compile_professional_video(content_data, is_short=True, progress_bar=None):
             if duration <= 0.6: duration = 3.0
             video_clip = ImageClip(frame_path).set_duration(duration)
             video_clip = video_clip.set_audio(audio_clip)
-        except:
+        except Exception as audio_err:
             video_clip = ImageClip(frame_path).set_duration(3.0)
         
         clips.append(video_clip)
@@ -233,9 +260,12 @@ def compile_professional_video(content_data, is_short=True, progress_bar=None):
         st.error(f"Video Compilation Framework Issue: {str(e)}")
         return None
     finally:
+        # File Cleanup
         for f in glob.glob("p_frame_*.png") + glob.glob("p_voice_*.mp3"):
-            try: os.remove(f)
-            except: pass
+            try: 
+                os.remove(f)
+            except: 
+                pass
         
     return output_filename
 
@@ -279,7 +309,7 @@ tab_dashboard, tab_research, tab_scripts, tab_voice, tab_videos, tab_schedule, t
     "📊 Dashboard", "🔍 Research", "📄 Scripts", "🎙️ Voiceovers", "🎬 Videos", "📅 Scheduled", "⚙️ Add Channel"
 ])
 
-# Try to initialize YouTube client ONLY if credentials exist in session state
+# Initialize channel state check
 youtube_client = None
 if "oauth_credentials" in st.session_state:
     try:
@@ -287,7 +317,7 @@ if "oauth_credentials" in st.session_state:
     except:
         pass
 
-# Fetch stats if connected
+# Setup dynamic values for stats card
 real_views, real_subs, real_vids = "0", "0", "0"
 if youtube_client:
     api_stats = fetch_real_stats(youtube_client)
@@ -350,8 +380,10 @@ with tab_dashboard:
                     )
                     progress_bar.progress(1.0, text="Completed!")
                     status_container.success(f"🎉 **Video Live!** ID: {upload_res.get('id')}")
-                    try: os.remove(video_file)
-                    except: pass
+                    try: 
+                        os.remove(video_file)
+                    except: 
+                        pass
                 except Exception as upload_err:
                     status_container.error(f"❌ Upload Error: {str(upload_err)}")
             else:
@@ -367,24 +399,40 @@ with tab_dashboard:
     with col_stat2:
         st.markdown(f'<div class="stat-card" style="border-left: 5px solid #3b82f6;"><div class="stat-num" style="color: #3b82f6;">{real_views}</div><p style="color: #64748b; margin: 0; font-size: 14px;">Total Views</p></div>', unsafe_allow_html=True)
 
-# ==================== TAB: CHANNEL MANAGEMENT ====================
+# ==================== TAB 2: RESEARCH ====================
+with tab_research:
+    st.subheader("🔍 Active Trend Monitor")
+    st.info("Humare AI filters automatically dynamic niche analytics ko search kar rahe hain.")
+
+# ==================== TAB 3: SCRIPTS ====================
+with tab_scripts:
+    st.subheader("📝 Live Script Manager")
+    st.write("Aap custom prompt ke zariye script edit kar sakte hain.")
+
+# ==================== TAB 4: VOICEOVERS ====================
+with tab_voice:
+    st.subheader("🎙️ Voice Profile Settings")
+    st.selectbox("Default TTS Engine Profile", [
+        "en-US-AnaNeural (Kids/Standard)", 
+        "en-US-GuyNeural (Male/Calm)", 
+        "ur-PK-AsadNeural (Urdu/Standard)"
+    ])
+
+# ==================== TAB 5: VIDEOS ====================
+with tab_videos:
+    st.subheader("🎬 Active Rendering Queue")
+    st.write("Rendered file preview zone.")
+
+# ==================== TAB 6: SCHEDULED ====================
+with tab_schedule:
+    st.subheader("📅 Auto Upload Log")
+    st.info("Is tab mein scheduling pipeline live check ki ja sakti hai.")
+
+# ==================== TAB 7: CHANNEL MANAGEMENT ====================
 with tab_channel:
     st.subheader("⚙️ Channel Management")
     st.write("Apna Google account link karne ke liye niche diya gaya process follow karein:")
     
-    # Run authorization ONLY inside this tab
     active_client = handle_youtube_auth()
     if active_client:
         st.success("✅ Aapka YouTube Channel fully authorized aur connected hai!")
-
-# ==================== OTHER TABS ====================
-with tab_research:
-    st.subheader("🔍 Active Trend Monitor")
-with tab_scripts:
-    st.subheader("📝 Live Script")
-with tab_voice:
-    st.subheader("🎙️ Voice Settings")
-with tab_videos:
-    st.subheader("🎬 Video Render Status")
-with tab_schedule:
-    st.subheader("📅 Auto Upload Log")
