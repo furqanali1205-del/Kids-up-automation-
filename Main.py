@@ -10,14 +10,11 @@ import requests
 
 # --- Safe Dynamic Import for MoviePy (Python 3.14+ Compatibility) ---
 try:
-    # Naye version 2.0+ ke liye safe import
     from moviepy import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
 except ImportError:
     try:
-        # Agar purana version ho toh fallback
         from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
     except ImportError:
-        # Agar dono fail ho jayein toh user ko custom informative error dikhayein bina crash kiye
         st.error("⚠️ System local libraries sync kar raha hai. Agar ye error barkarar rahe, toh requirements.txt mein 'moviepy==1.0.3' ya 'moviepy>=2.0.0' specify karein.")
 
 # --- Edge-TTS Fallback Safe Import ---
@@ -75,8 +72,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Real YouTube API Authentication Helper ---
-def get_youtube_client():
+# --- Dynamic Redirect URI ---
+def get_current_redirect_uri():
+    return "https://mfiqppcjcdmnoxuec6anbm.streamlit.app/"
+
+# --- Handle OAuth 2.0 & YouTube Clients (Fixed Session State Crash) ---
+def handle_youtube_auth():
     if "CLIENT_SECRETS_JSON" not in st.secrets:
         st.error("❌ CLIENT_SECRETS_JSON secrets mein missing hai!")
         return None
@@ -84,29 +85,37 @@ def get_youtube_client():
     try:
         client_config = json.loads(st.secrets["CLIENT_SECRETS_JSON"])
         SCOPES = ['https://www.googleapis.com/auth/youtube.upload', 'https://www.googleapis.com/auth/youtube.readonly']
+        redirect_uri = get_current_redirect_uri()
+        client_config["web"]["redirect_uris"] = [redirect_uri]
         
-        flow = Flow.from_client_config(
-            client_config,
-            scopes=SCOPES,
-            redirect_uri=client_config["web"]["redirect_uris"][0]
-        )
-        
+        # Flow object ko lock kiya taake code_verifier refresh hone par change na ho
+        if "oauth_flow" not in st.session_state:
+            st.session_state.oauth_flow = Flow.from_client_config(
+                client_config,
+                scopes=SCOPES,
+                redirect_uri=redirect_uri
+            )
+            st.session_state.auth_url, _ = st.session_state.oauth_flow.authorization_url(prompt='consent', access_type='offline')
+
         if "oauth_credentials" not in st.session_state:
-            auth_url, _ = flow.authorization_url(prompt='consent', access_type='offline')
             st.info("🗝️ **YouTube Authentication Required:**")
-            st.markdown(f'<a href="{auth_url}" target="_blank" style="display: inline-block; padding: 12px 24px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; text-align: center; width: 100%;">🔗 Click Karein Aur Google Account Auth Link Kholein</a>', unsafe_allow_html=True)
+            st.write("Neeche diye gaye blue button par click karke permissions allow karein aur aakhri page ke browser URL se code copy karein.")
+            st.markdown(f'<a href="{st.session_state.auth_url}" target="_blank" style="display: inline-block; padding: 12px 24px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 8px; font-weight: bold; text-align: center; width: 100%;">🔗 Click Karein Aur Google Account Auth Link Kholein</a>', unsafe_allow_html=True)
             
-            auth_code = st.text_input("Login karne ke baad jo URL khule, usme 'code=' ke baad wala poora text copy karke yahan paste karein aur Enter dabayein:")
+            auth_code = st.text_input("Naya authorization code yahan paste karein aur Enter dabayein:", key="youtube_auth_code_input")
             if auth_code:
-                flow.fetch_token(code=auth_code)
-                st.session_state.oauth_credentials = flow.credentials
-                st.success("✅ Google Account successfully authorized!")
-                st.rerun()
+                try:
+                    st.session_state.oauth_flow.fetch_token(code=auth_code.strip())
+                    st.session_state.oauth_credentials = st.session_state.oauth_flow.credentials
+                    st.success("✅ Google Account successfully authorized!")
+                    st.rerun()
+                except Exception as token_err:
+                    st.error(f"❌ Token Fetch Error: {str(token_err)}. Please open the link again to get a fresh code.")
             return None
         else:
             return build('youtube', 'v3', credentials=st.session_state.oauth_credentials)
     except Exception as e:
-        st.error(f"OAuth Error: {str(e)}")
+        st.error(f"OAuth Integration Error: {str(e)}")
         return None
 
 # --- Real YouTube Stats Fetcher ---
@@ -168,16 +177,18 @@ async def generate_edge_voice(text, output_path, voice_profile="en-US-AnaNeural"
         communicate = edge_tts.Communicate(text, voice_profile, rate="+10%")
         await communicate.save(output_path)
     except:
-        # Fallback empty sound or local synthesis if edge-tts fails to load
         with open(output_path, "wb") as f:
             f.write(b"")
 
 # --- Video Rendering Engine ---
-def compile_professional_video(content_data, is_short=True):
+def compile_professional_video(content_data, is_short=True, progress_bar=None):
     clips = []
     size = (1080, 1920) if is_short else (1920, 1080)
     
     for i, scene in enumerate(content_data["scenes"]):
+        if progress_bar:
+            progress_bar.progress((i + 1) / len(content_data["scenes"]), text=f"Processing Scene {i+1}...")
+            
         img = Image.new("RGB", size, color=scene["bg_color"])
         draw = ImageDraw.Draw(img)
         cx, cy = size[0] // 2, size[1] // 2
@@ -203,7 +214,7 @@ def compile_professional_video(content_data, is_short=True):
         try:
             audio_clip = AudioFileClip(audio_path)
             duration = audio_clip.duration + 0.6
-            if duration <= 0.6: duration = 3.0 # Fallback default duration
+            if duration <= 0.6: duration = 3.0
             video_clip = ImageClip(frame_path).set_duration(duration)
             video_clip = video_clip.set_audio(audio_clip)
         except:
@@ -218,10 +229,10 @@ def compile_professional_video(content_data, is_short=True):
     except Exception as e:
         st.error(f"Video Compilation Framework Issue: {str(e)}")
         return None
-    
-    for f in glob.glob("p_frame_*.png") + glob.glob("p_voice_*.mp3"):
-        try: os.remove(f)
-        except: pass
+    finally:
+        for f in glob.glob("p_frame_*.png") + glob.glob("p_voice_*.mp3"):
+            try: os.remove(f)
+            except: pass
         
     return output_filename
 
@@ -260,9 +271,20 @@ st.markdown("""
     </div>
 """, unsafe_allow_html=True)
 
-# --- INITIALIZE REAL API CLIENT ---
-youtube_client = get_youtube_client()
+# --- NAVIGATION TABS ---
+tab_dashboard, tab_research, tab_scripts, tab_voice, tab_videos, tab_schedule, tab_channel = st.tabs([
+    "📊 Dashboard", "🔍 Research", "📄 Scripts", "🎙️ Voiceovers", "🎬 Videos", "📅 Scheduled", "⚙️ Add Channel"
+])
 
+# Try to initialize YouTube client ONLY if credentials exist in session state
+youtube_client = None
+if "oauth_credentials" in st.session_state:
+    try:
+        youtube_client = build('youtube', 'v3', credentials=st.session_state.oauth_credentials)
+    except:
+        pass
+
+# Fetch stats if connected
 real_views, real_subs, real_vids = "0", "0", "0"
 if youtube_client:
     api_stats = fetch_real_stats(youtube_client)
@@ -271,13 +293,13 @@ if youtube_client:
         real_subs = f"{int(api_stats['subs']):,}"
         real_vids = api_stats['videos']
 
-# --- NAVIGATION TABS ---
-tab_dashboard, tab_research, tab_scripts, tab_voice, tab_videos, tab_schedule, tab_channel = st.tabs([
-    "📊 Dashboard", "🔍 Research", "📄 Scripts", "🎙️ Voiceovers", "🎬 Videos", "📅 Scheduled", "⚙️ Add Channel"
-])
-
 # ==================== TAB 1: DASHBOARD ====================
 with tab_dashboard:
+    if not youtube_client:
+        st.warning("⚠️ **YouTube Channel Linked Nahi Hai!** Pehle aakhri tab '⚙️ Add Channel' par ja kar apna channel link karein.")
+    else:
+        st.success("✅ **YouTube Channel Connected!** Aap automation run karne ke liye tayyar hain.")
+
     st.markdown("""
         <div style="background-color: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 16px; padding: 20px; margin-bottom: 20px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
@@ -297,35 +319,40 @@ with tab_dashboard:
     
     if st.button("▶ Run Full Pipeline Now"):
         if not youtube_client:
-            st.error("❌ Pehle login karein!")
+            st.error("❌ Pehle '⚙️ Add Channel' tab mein ja kar channel authorize karein!")
         else:
-            with st.status("Processing Advanced Video Automation Engine...", expanded=True) as status:
-                st.write("🤖 Script generate ho raha hai...")
-                is_short = video_format == "Shorts (Portrait)"
-                ai_data = generate_ai_content("short" if is_short else "long")
-                
-                st.write(f"✨ Title: {ai_data['title']}")
-                video_file = compile_professional_video(ai_data, is_short=is_short)
-                
-                if video_file:
-                    st.write("📤 Uploading to YouTube...")
-                    try:
-                        upload_res = upload_video_to_youtube(
-                            youtube_client, 
-                            video_file, 
-                            ai_data["title"], 
-                            ai_data["description"], 
-                            ai_data["tags"]
-                        )
-                        status.update(label="Automation Complete!", state="complete")
-                        st.success(f"🎉 Video live! ID: {upload_res.get('id')}")
-                        try: os.remove(video_file)
-                        except: pass
-                    except Exception as upload_err:
-                        status.update(label="Upload Error!", state="error")
-                        st.error(f"Error: {str(upload_err)}")
-                else:
-                    status.update(label="Compilation Failed due to Environment version mismatch.", state="error")
+            status_container = st.empty()
+            progress_bar = st.progress(0, text="Initializing Pipeline...")
+            
+            # Step 1: Gemini Generation
+            status_container.info("🤖 Script generate ho raha hai...")
+            is_short = video_format == "Shorts (Portrait)"
+            ai_data = generate_ai_content("short" if is_short else "long")
+            st.write(f"✨ **Title:** {ai_data['title']}")
+            
+            # Step 2: Render
+            status_container.info("🎬 Audio aur Video render ho raha hai...")
+            video_file = compile_professional_video(ai_data, is_short=is_short, progress_bar=progress_bar)
+            
+            if video_file and os.path.exists(video_file):
+                # Step 3: Upload
+                status_container.info("📤 YouTube par upload ho raha hai...")
+                try:
+                    upload_res = upload_video_to_youtube(
+                        youtube_client, 
+                        video_file, 
+                        ai_data["title"], 
+                        ai_data["description"], 
+                        ai_data["tags"]
+                    )
+                    progress_bar.progress(1.0, text="Completed!")
+                    status_container.success(f"🎉 **Video Live!** ID: {upload_res.get('id')}")
+                    try: os.remove(video_file)
+                    except: pass
+                except Exception as upload_err:
+                    status_container.error(f"❌ Upload Error: {str(upload_err)}")
+            else:
+                status_container.error("❌ Rendering fail ho gayi.")
 
     st.write("---")
     
@@ -336,6 +363,16 @@ with tab_dashboard:
         st.markdown(f'<div class="stat-card" style="border-left: 5px solid #10b981;"><div class="stat-num" style="color: #10b981;">{real_subs}</div><p style="color: #64748b; margin: 0; font-size: 14px;">Total Subscribers</p></div>', unsafe_allow_html=True)
     with col_stat2:
         st.markdown(f'<div class="stat-card" style="border-left: 5px solid #3b82f6;"><div class="stat-num" style="color: #3b82f6;">{real_views}</div><p style="color: #64748b; margin: 0; font-size: 14px;">Total Views</p></div>', unsafe_allow_html=True)
+
+# ==================== TAB: CHANNEL MANAGEMENT ====================
+with tab_channel:
+    st.subheader("⚙️ Channel Management")
+    st.write("Apna Google account link karne ke liye niche diya gaya process follow karein:")
+    
+    # Run active authorization only here!
+    active_client = handle_youtube_auth()
+    if active_client:
+        st.success("✅ Aapka YouTube Channel fully authorized aur connected hai!")
 
 # ==================== OTHER TABS ====================
 with tab_research:
@@ -348,7 +385,3 @@ with tab_videos:
     st.subheader("🎬 Video Render Status")
 with tab_schedule:
     st.subheader("📅 Auto Upload Log")
-with tab_channel:
-    st.markdown("""<div class="connection-box"><h3>➕ Channel Management</h3>""", unsafe_allow_html=True)
-    st.write("OAuth linked.")
-    st.markdown("</div>", unsafe_allow_html=True)
