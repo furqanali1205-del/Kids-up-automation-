@@ -15,9 +15,9 @@ except ImportError:
     try:
         from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
     except ImportError:
-        st.error("⚠️ System local libraries sync kar raha hai. Requirements mein 'moviepy==1.0.3' check karein.")
+        st.error("⚠️ Requirements mein 'moviepy==1.0.3' check karein.")
 
-# --- Edge-TTS Safe Import ---
+# --- Edge-TTS Import ---
 try:
     import edge_tts
 except ImportError:
@@ -74,51 +74,51 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# --- Token Configuration (Direct String) ---
-TOKEN_STRING = """{
-  "token": "ya29.a0ARWov06EM-ZcwrdZ5IXmGj7G1Wk021r0reXqZcFwcHcYacZ3YBu1itBsu_fTGIuAco6MCWyr7L-QLIog-4AuKCUynjgg-b_Px6vIG1aBKvpv44ysqerLcK19-InsAUZloImMLbXdhIdTRaFh2M1tXYkmO1-vAwvPQcVChTIsXK1ATgDrJ-Pr2FHm_oIKI1mhO3vo9saCgYKAMoSARMSFQHGXZM1DS2Z7nxpjXJTUf9hlb-ogw0206",
-  "refresh_token": "1//06r0m7j1fIPgqCgYIARAAGAQSNwF-L9Irh-ovdpRq-nhUwwIZDGpk8Tx6N-vZbY1sLgPaN83FsaJAlukgWmW6Kd2TknUaVeFmHc",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "client_id": "508302416282-rcipiv4rn2c67e49m9mjl8anlpnkk2fr.apps.googleusercontent.com",
-  "client_secret": "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",
-  "scopes": [
-    "https://www.googleapis.com/auth/youtube.upload",
-    "https://www.googleapis.com/auth/youtube.readonly"
-  ]
-}"""
+# --- Dynamic Session States ---
+if "youtube_credentials" not in st.session_state:
+    st.session_state.youtube_credentials = None
 
-# --- Direct Connection Handler ---
-def handle_youtube_auth():
-    try:
-        # Streamlit secrets check (Agar user ne secrets configure kiya hai)
-        if "YOUTUBE_TOKEN_JSON" in st.secrets:
-            token_data = st.secrets["YOUTUBE_TOKEN_JSON"]
-            if isinstance(token_data, str):
-                token_info = json.loads(token_data)
-            else:
-                token_info = token_data
-        else:
-            token_info = json.loads(TOKEN_STRING)
+# --- Connection Handler (Safe & Resilient) ---
+def handle_youtube_auth(token_input_str=None):
+    token_info = None
+    
+    # 1. First priority: UI manual input
+    if token_input_str:
+        try:
+            token_info = json.loads(token_input_str)
+        except Exception as e:
+            st.error(f"❌ Input JSON is invalid: {str(e)}")
+            return None
             
-        creds = Credentials.from_authorized_user_info(token_info)
-        st.session_state.oauth_credentials = creds
+    # 2. Second priority: Streamlit secrets
+    elif "YOUTUBE_TOKEN_JSON" in st.secrets:
+        try:
+            sec_val = st.secrets["YOUTUBE_TOKEN_JSON"]
+            token_info = json.loads(sec_val) if isinstance(sec_val, str) else sec_val
+        except Exception:
+            pass
+
+    if not token_info:
+        return None
         
-        # Token Refresh Logic with direct call
+    try:
+        creds = Credentials.from_authorized_user_info(token_info)
+        
+        # Safe Token Refresh
         if creds.expired and creds.refresh_token:
             from google.auth.transport.requests import Request
-            creds.refresh(Request())
-            
+            try:
+                creds.refresh(Request())
+            except Exception as refresh_err:
+                # Agar refresh fail ho jaye (invalid_grant), to crash hone ke bajaye warning de
+                st.error("⚠️ Token Refresh Fail! Google ne purana session block kar diya hai. Add Channel tab mein naya token dalein.")
+                return None
+                
+        st.session_state.youtube_credentials = creds
         return build('youtube', 'v3', credentials=creds)
     except Exception as e:
-        # Koi bhi silent failure bypass karne ke liye back-up load
-        try:
-            token_info = json.loads(TOKEN_STRING)
-            creds = Credentials.from_authorized_user_info(token_info)
-            st.session_state.oauth_credentials = creds
-            return build('youtube', 'v3', credentials=creds)
-        except Exception as backup_err:
-            st.error(f"❌ Autopilot Connection Block: {str(backup_err)}")
-            return None
+        st.error(f"❌ Authentication Setup Error: {str(e)}")
+        return None
 
 # --- Real YouTube Stats Fetcher ---
 def fetch_real_stats(youtube):
@@ -136,7 +136,7 @@ def fetch_real_stats(youtube):
         pass
     return None
 
-# --- Gemini AI Script & Smart Content Generator ---
+# --- Gemini AI Script Generator ---
 def generate_ai_content(format_type="short"):
     headers = {"Content-Type": "application/json"}
     api_key = st.secrets.get("GEMINI_API_KEY", "")
@@ -170,7 +170,7 @@ def generate_ai_content(format_type="short"):
         raw_text = res_json['candidates'][0]['content']['parts'][0]['text']
         cleaned_text = raw_text.replace("```json", "").replace("```", "").strip()
         return json.loads(cleaned_text)
-    except Exception as e:
+    except Exception:
         return {
             "title": "Five Little Monkeys Jumping On The Bed (Funny Remake)",
             "description": "Fun animation for kids. #nurseryrhymes",
@@ -183,7 +183,7 @@ def generate_ai_content(format_type="short"):
             ]
         }
 
-# --- Premium Async Edge-TTS Engine ---
+# --- Edge-TTS Engine ---
 async def generate_edge_voice(text, output_path, voice_profile="en-US-AnaNeural"):
     try:
         communicate = edge_tts.Communicate(text, voice_profile, rate="+10%")
@@ -193,7 +193,7 @@ async def generate_edge_voice(text, output_path, voice_profile="en-US-AnaNeural"
         with open(output_path, "wb") as f:
             f.write(b"")
 
-# --- Professional Video Rendering Engine ---
+# --- Video Compilation Engine ---
 def compile_professional_video(content_data, is_short=True, progress_bar=None):
     clips = []
     size = (1080, 1920) if is_short else (1920, 1080)
@@ -241,12 +241,9 @@ def compile_professional_video(content_data, is_short=True, progress_bar=None):
             else:
                 video_clip = video_clip.set_audio(audio_clip)
                 
-        except Exception as audio_err:
+        except Exception:
             img_clip = ImageClip(frame_path)
-            if hasattr(img_clip, "with_duration"):
-                video_clip = img_clip.with_duration(3.0)
-            else:
-                video_clip = img_clip.set_duration(3.0)
+            video_clip = img_clip.with_duration(3.0) if hasattr(img_clip, "with_duration") else img_clip.set_duration(3.0)
         
         clips.append(video_clip)
         
@@ -255,18 +252,16 @@ def compile_professional_video(content_data, is_short=True, progress_bar=None):
         output_filename = "professional_output.mp4"
         final_video.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac")
     except Exception as e:
-        st.error(f"Video Compilation Framework Issue: {str(e)}")
+        st.error(f"Video Rendering Error: {str(e)}")
         return None
     finally:
         for f in glob.glob("p_frame_*.png") + glob.glob("p_voice_*.mp3"):
-            try: 
-                os.remove(f)
-            except: 
-                pass
+            try: os.remove(f)
+            except: pass
         
     return output_filename
 
-# --- Real YouTube Upload Logic ---
+# --- YouTube Upload Logic ---
 def upload_video_to_youtube(youtube, file_path, title, desc, tags):
     body = {
         'snippet': {
@@ -306,8 +301,15 @@ tab_dashboard, tab_research, tab_scripts, tab_voice, tab_videos, tab_schedule, t
     "📊 Dashboard", "🔍 Research", "📄 Scripts", "🎙️ Voiceovers", "🎬 Videos", "📅 Scheduled", "⚙️ Add Channel"
 ])
 
-# Try connection instantly (Simplified flow)
-youtube_client = handle_youtube_auth()
+# Use Session State saved credentials if available, otherwise read from default
+youtube_client = None
+if st.session_state.youtube_credentials:
+    try:
+        youtube_client = build('youtube', 'v3', credentials=st.session_state.youtube_credentials)
+    except:
+        youtube_client = handle_youtube_auth()
+else:
+    youtube_client = handle_youtube_auth()
 
 real_views, real_subs, real_vids = "0", "0", "0"
 if youtube_client:
@@ -320,9 +322,9 @@ if youtube_client:
 # ==================== TAB 1: DASHBOARD ====================
 with tab_dashboard:
     if not youtube_client:
-        st.warning("⚠️ **Channel Connection Blocked!** Check authorization on local credentials.")
+        st.error("⚠️ **Connection Timeout / Session Expired!** Please go to '⚙️ Add Channel' and input your updated JSON credentials.")
     else:
-        st.success("🎉 **YouTube Channel Connected!** Ready to run automation.")
+        st.success("🎉 **YouTube Channel Connected Successfully!**")
 
     st.markdown("""
         <div style="background-color: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 16px; padding: 20px; margin-bottom: 20px;">
@@ -337,27 +339,28 @@ with tab_dashboard:
         video_format = st.selectbox("📹 Format Select", ["Shorts (Portrait)", "Long Video (Landscape)"])
         target_country = st.selectbox("🌍 Target Country", ["US", "UK", "CA", "PK"], index=0)
     with col_ap2:
-        autopilot_toggle = st.toggle("AutoPilot Active State", value=True, label_visibility="collapsed")
+        st.markdown("<p style='font-size:14px; font-weight:bold; color:#64748b;'>AutoPilot Engine Switch</p>", unsafe_allow_html=True)
+        autopilot_toggle = st.toggle("Activate Auto Mode", value=True)
         
     st.markdown("</div>", unsafe_allow_html=True)
     
     if st.button("▶ Run Full Pipeline Now"):
         if not youtube_client:
-            st.error("❌ Action stopped. YouTube client could not authorize.")
+            st.error("❌ Action blocked. YouTube client is not authorized. Correct credentials first in 'Add Channel' tab.")
         else:
             status_container = st.empty()
             progress_bar = st.progress(0, text="Initializing Pipeline...")
             
-            status_container.info("🤖 Generating Script using Gemini AI...")
+            status_container.info("🤖 Generating Kids Script using Gemini AI...")
             is_short = video_format == "Shorts (Portrait)"
             ai_data = generate_ai_content("short" if is_short else "long")
             st.write(f"✨ **Title:** {ai_data['title']}")
             
-            status_container.info("🎬 Rendering Scenes & Compiling Audio...")
+            status_container.info("🎬 Rendering Canvas & Generating Voiceovers (Edge-TTS)...")
             video_file = compile_professional_video(ai_data, is_short=is_short, progress_bar=progress_bar)
             
             if video_file and os.path.exists(video_file):
-                status_container.info("📤 Uploading direct to YouTube...")
+                status_container.info("📤 Uploading direct to YouTube Channel...")
                 try:
                     upload_res = upload_video_to_youtube(
                         youtube_client, 
@@ -367,15 +370,13 @@ with tab_dashboard:
                         ai_data["tags"]
                     )
                     progress_bar.progress(1.0, text="Completed!")
-                    status_container.success(f"🎉 **Video Live!** ID: {upload_res.get('id')}")
-                    try: 
-                        os.remove(video_file)
-                    except: 
-                        pass
+                    status_container.success(f"🎉 **Video is Live!** ID: {upload_res.get('id')}")
+                    try: os.remove(video_file)
+                    except: pass
                 except Exception as upload_err:
-                    status_container.error(f"❌ Upload Error: {str(upload_err)}")
+                    status_container.error(f"❌ Upload Failed (Credentials issue): {str(upload_err)}")
             else:
-                status_container.error("❌ Rendering fail ho gayi.")
+                status_container.error("❌ Rendering engine failed.")
 
     st.write("---")
     
@@ -401,5 +402,20 @@ with tab_schedule:
 
 # ==================== TAB 7: CHANNEL MANAGEMENT ====================
 with tab_channel:
-    st.success("✅ **YouTube Channel connection established successfully!**")
-    st.info("System backup flow auto-configured.")
+    st.subheader("⚙️ Add & Update Channel Credentials")
+    st.write("Apna naya ya updated credentials JSON niche paste karein taake authentication errors khatam ho sakein:")
+    
+    # Input Area for fresh user tokens
+    token_json_input = st.text_area("Paste OAuth Authorized User JSON:", height=250, placeholder='{"token": "ya29...", "refresh_token": "...", ...}')
+    
+    if st.button("🔄 Sync & Save Channel"):
+        if token_json_input.strip() == "":
+            st.error("Please enter a valid JSON token string.")
+        else:
+            test_client = handle_youtube_auth(token_input_str=token_json_input)
+            if test_client:
+                st.success("🎉 Channel connection established successfully! App Refresh ho raha hai...")
+                time.sleep(1)
+                st.rerun()
+            else:
+                st.error("❌ Provided credentials failed connection validation. Please check scopes and retry.")
