@@ -45,29 +45,32 @@ def get_youtube_client():
     try: return build('youtube', 'v3', developerKey=st.session_state.api_key)
     except: return None
 
-def fetch_channel_stats(youtube, channel_id):
-    if not channel_id: return None
+# Force clear local cache to prevent wrong channel values leaking
+@st.cache_data(ttl=1)
+def fetch_channel_stats_live(api_key, channel_id):
+    if not api_key or not channel_id:
+        return {"views": "0", "subs": "0", "videos": "0"}
     try:
+        youtube = build('youtube', 'v3', developerKey=api_key)
         request = youtube.channels().list(part="statistics,snippet", id=channel_id)
         response = request.execute()
-        if "items" in response:
+        if "items" in response and len(response["items"]) > 0:
             item = response["items"][0]
-            st.session_state.channel_name = item["snippet"]["title"]
             stats = item["statistics"]
             return {
                 "views": stats.get("viewCount", "0"),
                 "subs": stats.get("subscriberCount", "0"),
                 "videos": stats.get("videoCount", "0")
             }
-    except: pass
+    except:
+        pass
     return {"views": "0", "subs": "0", "videos": "0"}
 
-# --- AI Dynamic Script Generator (Fixed Syntax) ---
+# --- AI Dynamic Script Generator ---
 def generate_dynamic_script(format_type="Shorts"):
     api_key = st.secrets.get("GEMINI_API_KEY", "")
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
     
-    # Strictly fixed strings to avoid syntax cuts
     prompt = f"Generate a unique and catchy 4-scene nursery rhyme or simple kids story optimized for YouTube {format_type}. Every time generate a different random theme like animals, space, sea life, numbers, or trains. Response must be strictly in raw JSON format with no markdown backticks with this structure: {{\x22title\x22: \x22Rhyme Title\x22, \x22scenes\x22: [\x22Scene 1 narrated line\x22, \x22Scene 2 narrated line\x22, \x22Scene 3 narrated line\x22, \x22Scene 4 narrated line\x22]}}"
     
     try:
@@ -80,7 +83,7 @@ def generate_dynamic_script(format_type="Shorts"):
         themes = [
             {"title": f"The Jolly Little Train {t}", "scenes": ["Choo choo goes the happy train!", "Rolling down the track again.", "Red and blue and bright and green.", "Prettiest train you have ever seen!"]},
             {"title": f"Five Little Fishes {t}", "scenes": ["Five little fishes swimming in the sea.", "Happy and wild, swimming so free.", "One blew a bubble and swam away.", "Four little fishes left to play."]},
-            {"title": f"Dancing Stars {t}", "scenes": ["Look at the stars up in the sky.", "Winking at us from way up high.", "Shining bright like a diamond glow.", "Lighting up the world below."]}
+            {"title": f"Dancing Stars {t}", "scenes": ["Look at the stars up in the sky.", "Winking at us from way up high.", "Shining bright like a diamond glow.", "Lighting up the world below!"]}
         ]
         return themes[t]
 
@@ -171,8 +174,8 @@ st.title("🎬 Kids AutoPilot Video Studio")
 
 tab_dashboard, tab_settings = st.tabs(["🚀 Video Pipeline", "⚙️ Channel Configuration"])
 
-youtube_client = get_youtube_client()
-stats = fetch_channel_stats(youtube_client, st.session_state.channel_id) if youtube_client else {"views": "0", "subs": "0", "videos": "0"}
+# Live fresh metrics extraction (No memory/leaks)
+stats = fetch_channel_stats_live(st.session_state.api_key, st.session_state.channel_id)
 
 with tab_dashboard:
     col1, col2, col3 = st.columns(3)
@@ -201,6 +204,8 @@ with tab_settings:
     if st.button("Save & Sync Settings"):
         st.session_state.api_key = in_key
         st.session_state.channel_id = in_id
-        st.success("Settings Sync Completed!")
-        time.sleep(1)
+        # Hard reset Streamlit local storage cache
+        st.cache_data.clear()
+        st.success("Cache cleared and Settings Sync Completed!")
+        time.sleep(0.5)
         st.rerun()
