@@ -4,88 +4,47 @@ import json
 import time
 import glob
 import asyncio
-import numpy as np
-from PIL import Image, ImageDraw, ImageFont
 import requests
-
-# --- Safe Dynamic Import for MoviePy ---
-try:
-    from moviepy import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
-except ImportError:
-    try:
-        from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
-    except ImportError:
-        st.error("⚠️ Requirements mein 'moviepy==1.0.3' check karein.")
-
-# --- Edge-TTS Import ---
-try:
-    import edge_tts
-except ImportError:
-    st.error("⚠️ 'edge-tts' library missing hai.")
-
-# Google API client for public/data fetch
 from googleapiclient.discovery import build
 
-# --- Page Config ---
-st.set_page_config(page_title="YouTube Automation Studio", page_icon="🎬", layout="centered")
+# --- MoviePy Imports ---
+try:
+    from moviepy.editor import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
+except ImportError:
+    from moviepy import ImageClip, AudioFileClip, concatenate_videoclips, CompositeAudioClip
 
-# --- Custom Premium CSS ---
+# --- Edge-TTS ---
+import edge_tts
+
+st.set_page_config(page_title="Premium YouTube Automation Studio", page_icon="🎬", layout="centered")
+
+# --- Dark Slate Premium UI ---
 st.markdown("""
     <style>
-    .main { background-color: #f8f9fa; color: #1e293b; }
-    h1, h2, h3, p { color: #1e293b !important; }
-    div[data-baseweb="input"] { background-color: white !important; border-radius: 8px !important; }
-    
+    .main { background-color: #0f172a; color: #f8fafc; }
+    h1, h2, h3, p, label { color: #f8fafc !important; }
+    div[data-baseweb="input"] { background-color: #1e293b !important; color: white !important; border-radius: 10px !important; }
     .stButton>button { 
-        background-color: #8b5cf6 !important; 
-        color: white !important; 
-        border-radius: 30px !important; 
-        width: 100% !important; 
-        height: 52px !important; 
-        font-weight: bold !important; 
-        font-size: 16px !important;
-        border: none !important;
-        box-shadow: 0 4px 6px -1px rgba(139, 92, 246, 0.3);
+        background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%) !important; 
+        color: white !important; border-radius: 12px !important; height: 50px !important; font-weight: bold !important; border: none !important;
     }
-    
-    .shogo-header {
-        background-color: white;
-        padding: 15px;
-        border-radius: 16px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        display: flex;
-        align-items: center;
-        margin-bottom: 20px;
-        border: 1px solid #f1f5f9;
-    }
-    
     .stat-card {
-        background-color: white;
-        border-radius: 16px;
-        padding: 20px;
-        text-align: center;
-        border: 1px solid #f1f5f9;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.02);
+        background-color: #1e293b; border-radius: 12px; padding: 20px; text-align: center; border: 1px solid #334155;
     }
-    .stat-num { font-size: 28px; font-weight: 800; margin-bottom: 2px; }
+    .stat-num { font-size: 32px; font-weight: 800; color: #38bdf8; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- Initialize Simple Settings ---
+# --- State Management ---
 if "api_key" not in st.session_state: st.session_state.api_key = st.secrets.get("YOUTUBE_API_KEY", "")
-if "channel_id" not in st.session_state: st.session_state.channel_id = st.secrets.get("YOUTUBE_CHANNEL_ID", "")
-if "channel_name" not in st.session_state: st.session_state.channel_name = "My Channel"
+if "channel_id" not in st.session_state: st.session_state.channel_id = "UCuILBGteDysGVKVMaPPnjxg"
+if "channel_name" not in st.session_state: st.session_state.channel_name = "kids Up"
 
-# --- Simple Public Client Builder ---
 def get_youtube_client():
-    if not st.session_state.api_key:
-        return None
-    try:
-        return build('youtube', 'v3', developerKey=st.session_state.api_key)
-    except Exception:
-        return None
+    if not st.session_state.api_key: return None
+    try: return build('youtube', 'v3', developerKey=st.session_state.api_key)
+    except: return None
 
-# --- Stats Fetcher via API Key ---
 def fetch_channel_stats(youtube, channel_id):
     if not channel_id: return None
     try:
@@ -93,191 +52,119 @@ def fetch_channel_stats(youtube, channel_id):
         response = request.execute()
         if "items" in response:
             item = response["items"][0]
-            stats = item["statistics"]
             st.session_state.channel_name = item["snippet"]["title"]
+            stats = item["statistics"]
             return {
                 "views": stats.get("viewCount", "0"),
                 "subs": stats.get("subscriberCount", "0"),
                 "videos": stats.get("videoCount", "0")
             }
-    except Exception:
-        pass
-    return None
+    except: pass
+    return {"views": "0", "subs": "0", "videos": "0"}
 
-# --- Gemini AI Script Generator ---
-def generate_ai_content(format_type="short"):
-    api_key = st.secrets.get("GEMINI_API_KEY", "")
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    prompt = f"Generate a 4-scene nursery rhyme script for kids, optimized for YouTube {format_type}. Response as JSON with keys: 'title', 'description', 'tags', 'scenes' (list with 'text', 'bg_color', 'character_action'). No markdown backticks."
+# --- Download Background Music ---
+def download_bg_music():
+    bg_url = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" # Safe royalty-free kids instrumental stream
+    bg_path = "bg_music.mp3"
+    if not os.path.exists(bg_path):
+        r = requests.get(bg_url)
+        with open(bg_path, "wb") as f: f.write(r.content)
+    return bg_path
+
+# --- High Quality Templates instead of Ugly Emoji ---
+def download_kids_template(index):
+    # Free standard cartoon templates for kids background
+    urls = [
+        "https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?w=1080&q=80",
+        "https://images.unsplash.com/photo-1534447677768-be436bb09401?w=1080&q=80",
+        "https://images.unsplash.com/photo-1509062522246-3755977927d7?w=1080&q=80",
+        "https://images.unsplash.com/photo-1516627145497-ae6968895b74?w=1080&q=80"
+    ]
+    path = f"template_{index}.jpg"
+    try:
+        r = requests.get(urls[index % len(urls)])
+        with open(path, "wb") as f: f.write(r.content)
+    except:
+        # Fallback
+        from PIL import Image
+        img = Image.new("RGB", (1080, 1920), color="#4f46e5")
+        img.save(path)
+    return path
+
+async def generate_voice(text, path):
+    communicate = edge_tts.Communicate(text, "en-US-AnaNeural", rate="+5%")
+    await communicate.save(path)
+
+def build_premium_video(progress_bar):
+    # Fixed high quality template scripts for kids rhymes
+    scenes_data = [
+        "Welcome to the magical world of fun and learning!",
+        "Five little birds sitting on a tree, singing sweet songs for you and me.",
+        "Let us count them together one by one.",
+        "Don't forget to like and subscribe for more amazing adventures!"
+    ]
     
-    try:
-        r = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]}, headers={"Content-Type": "application/json"})
-        raw_text = r.json()['candidates'][0]['content']['parts'][0]['text']
-        return json.loads(raw_text.replace("```json", "").replace("```", "").strip())
-    except Exception:
-        return {
-            "title": "Five Little Monkeys Jumping On The Bed",
-            "description": "Fun kids animation. #nurseryrhymes",
-            "tags": "kids songs, nursery rhymes",
-            "scenes": [
-                {"text": "Five little monkeys jumping on the bed!", "bg_color": "#ff6b6b", "character_action": "jumping"},
-                {"text": "One fell off and bumped his head!", "bg_color": "#4ecdc4", "character_action": "crying"},
-                {"text": "Mama called the doctor and the doctor said,", "bg_color": "#ffe66d", "character_action": "laughing"},
-                {"text": "No more monkeys jumping on the bed!", "bg_color": "#1a535c", "character_action": "dancing"}
-            ]
-        }
-
-# --- Edge-TTS Engine ---
-async def generate_edge_voice(text, output_path):
-    try:
-        communicate = edge_tts.Communicate(text, "en-US-AnaNeural", rate="+10%")
-        await communicate.save(output_path)
-    except Exception:
-        with open(output_path, "wb") as f: f.write(b"")
-
-# --- Video Rendering Framework ---
-def compile_professional_video(content_data, is_short=True, progress_bar=None):
     clips = []
-    size = (1080, 1920) if is_short else (1920, 1080)
+    bg_music_path = download_bg_music()
     
-    for i, scene in enumerate(content_data["scenes"]):
-        if progress_bar: progress_bar.progress((i + 1) / len(content_data["scenes"]), text=f"Processing Scene {i+1}...")
-        img = Image.new("RGB", size, color=scene["bg_color"])
-        draw = ImageDraw.Draw(img)
-        cx, cy = size[0] // 2, size[1] // 2
+    for i, text in enumerate(scenes_data):
+        progress_bar.progress((i+1)/6, text=f"Rendering Scene {i+1} with HD Template...")
+        img_path = download_kids_template(i)
+        v_path = f"v_{i}.mp3"
+        asyncio.run(generate_voice(text, v_path))
         
-        draw.ellipse([cx-160, cy-160, cx+160, cy+160], fill="#ffde59", outline="#ff914d", width=12)
-        draw.ellipse([cx-80, cy-60, cx-40, cy-20], fill="black")
-        draw.ellipse([cx+40, cy-60, cx+80, cy-20], fill="black")
-        if scene.get("character_action") == "crying":
-            draw.arc([cx-60, cy+60, cx+60, cy+120], start=180, end=360, fill="black", width=10)
-        else:
-            draw.arc([cx-60, cy+40, cx+60, cy+100], start=0, end=180, fill="black", width=10)
-            
-        frame_path = f"p_frame_{i}.png"
-        img.save(frame_path)
-        
-        audio_path = f"p_voice_{i}.mp3"
-        asyncio.run(generate_edge_voice(scene["text"], audio_path))
-        
-        try:
-            audio_clip = AudioFileClip(audio_path)
-            duration = audio_clip.duration + 0.6 if audio_clip.duration > 0 else 3.0
-            img_clip = ImageClip(frame_path)
-            video_clip = img_clip.with_duration(duration).with_audio(audio_clip) if hasattr(img_clip, "with_duration") else img_clip.set_duration(duration).set_audio(audio_clip)
-        except Exception:
-            img_clip = ImageClip(frame_path)
-            video_clip = img_clip.with_duration(3.0) if hasattr(img_clip, "with_duration") else img_clip.set_duration(3.0)
-        
+        audio_clip = AudioFileClip(v_path)
+        img_clip = ImageClip(img_path).set_duration(audio_clip.duration + 0.5)
+        video_clip = img_clip.set_audio(audio_clip)
         clips.append(video_clip)
         
-    try:
-        final_video = concatenate_videoclips(clips, method="compose")
-        output_filename = "automated_output.mp4"
-        final_video.write_videofile(output_filename, fps=24, codec="libx264", audio_codec="aac")
-        return output_filename
-    except Exception:
-        return None
-    finally:
-        for f in glob.glob("p_frame_*.png") + glob.glob("p_voice_*.mp3"):
-            try: os.remove(f)
-            except: pass
+    progress_bar.progress(5/6, text="Mixing Background Music Track...")
+    final_video = concatenate_videoclips(clips, method="compose")
+    
+    # Mix Background Music at 15% Volume so voice is clear
+    bg_audio = AudioFileClip(bg_music_path).set_duration(final_video.duration).volumex(0.15)
+    mixed_audio = CompositeAudioClip([final_video.audio, bg_audio])
+    final_video = final_video.set_audio(mixed_audio)
+    
+    out_file = "premium_kids_short.mp4"
+    final_video.write_videofile(out_file, fps=24, codec="libx264", audio_codec="aac")
+    
+    # Cleanup logs
+    for f in glob.glob("v_*.mp3") + glob.glob("template_*.jpg"):
+        try: os.remove(f)
+        except: pass
+        
+    return out_file
 
-# --- BRAND HEADER ---
-st.markdown("""
-    <div class="shogo-header">
-        <div style="background-color: #ef4444; width: 44px; height: 44px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-right: 12px;">
-            <span style="color: white; font-size: 22px; font-weight: bold;">▶</span>
-        </div>
-        <div>
-            <h2 style="margin: 0; font-size: 20px; font-weight: 800; color: #8b5cf6 !important;">YouTube Automation Studio</h2>
-            <p style="margin: 0; font-size: 12px; color: #64748b;">Easiest Key & ID Method</p>
-        </div>
-    </div>
-""", unsafe_allow_html=True)
-
-# --- NAVIGATION TABS ---
-tab_dashboard, tab_research, tab_scripts, tab_voice, tab_videos, tab_schedule, tab_channel = st.tabs([
-    "📊 Dashboard", "🔍 Research", "📄 Scripts", "🎙️ Voiceovers", "🎬 Videos", "📅 Scheduled", "⚙️ Add Channel"
-])
+# --- UI Layout ---
+st.title("🎬 Premium Kids Automation Studio")
+st.write(f"Connected Channel ID: `{st.session_state.channel_id}`")
 
 youtube_client = get_youtube_client()
-real_views, real_subs, real_vids = "0", "0", "0"
+stats = fetch_channel_stats(youtube_client, st.session_state.channel_id) if youtube_client else {"views": "0", "subs": "0", "videos": "0"}
 
-if youtube_client and st.session_state.channel_id:
-    api_stats = fetch_channel_stats(youtube_client, st.session_state.channel_id)
-    if api_stats:
-        real_views = f"{int(api_stats['views']):,}"
-        real_subs = f"{int(api_stats['subs']):,}"
-        real_vids = api_stats['videos']
+# --- Correct Stats Injection ---
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.markdown(f'<div class="stat-card"><div class="stat-num">{stats["videos"]}</div><p>Real Videos</p></div>', unsafe_allow_html=True)
+with col2:
+    st.markdown(f'<div class="stat-card"><div class="stat-num">{stats["subs"]}</div><p>Subscribers</p></div>', unsafe_allow_html=True)
+with col3:
+    st.markdown(f'<div class="stat-card"><div class="stat-num">{stats["views"]}</div><p>Total Views</p></div>', unsafe_allow_html=True)
 
-# ==================== TAB 1: DASHBOARD ====================
-with tab_dashboard:
-    if not youtube_client or not st.session_state.channel_id:
-        st.warning("⚠️ **Channel Config Missing!** Go to '⚙️ Add Channel' to link using your API Key and Channel ID.")
-    else:
-        st.success(f"🎉 **Connected to:** {st.session_state.channel_name}")
+st.write("---")
 
-    st.markdown("""
-        <div style="background-color: #f5f3ff; border: 1px solid #ddd6fe; border-radius: 16px; padding: 20px; margin-bottom: 20px;">
-            <span style="font-weight: bold; font-size: 18px; color: #6d28d9;">🤖 YouTube AutoPilot</span>
-    """, unsafe_allow_html=True)
-    
-    col_ap1, col_ap2 = st.columns(2)
-    with col_ap1:
-        video_format = st.selectbox("📹 Format Select", ["Shorts (Portrait)", "Long Video (Landscape)"])
-    with col_ap2:
-        target_country = st.selectbox("🌍 Target Country", ["US", "UK", "CA", "PK"])
-        
-    st.markdown("</div>", unsafe_allow_html=True)
-    
-    if st.button("▶ Run Full Pipeline Now"):
-        if not st.session_state.api_key:
-            st.error("❌ Link your Channel using your API Key first.")
-        else:
-            status_container = st.empty()
-            progress_bar = st.progress(0, text="Initializing Pipeline...")
-            
-            status_container.info("🤖 Generating Script with Gemini AI...")
-            is_short = video_format == "Shorts (Portrait)"
-            ai_data = generate_ai_content("short" if is_short else "long")
-            st.write(f"✨ **Title:** {ai_data['title']}")
-            
-            status_container.info("🎬 Creating Video & Audio via Edge-TTS...")
-            video_file = compile_professional_video(ai_data, is_short=is_short, progress_bar=progress_bar)
-            
-            if video_file and os.path.exists(video_file):
-                progress_bar.progress(1.0, text="Completed!")
-                status_container.success("🎉 **Video Ready!** (Automated rendering finished successfully).")
-                st.video(video_file)
-            else:
-                status_container.error("❌ Video build failed.")
+if st.button("🔥 Generate Premium Video with Music & Song"):
+    p_bar = st.progress(0, text="Starting engine...")
+    output = build_premium_video(p_bar)
+    p_bar.progress(1.0, text="Done!")
+    st.success("🎉 Video created with high-quality background music mix!")
+    st.video(output)
 
-    st.write("---")
-    col_stat1, col_stat2 = st.columns(2)
-    with col_stat1:
-        st.markdown(f'<div class="stat-card" style="border-left: 5px solid #ef4444;"><div class="stat-num" style="color: #ef4444;">{real_vids}</div><p style="color: #64748b; margin: 0; font-size: 14px;">Total Videos</p></div>', unsafe_allow_html=True)
-        st.write("")
-        st.markdown(f'<div class="stat-card" style="border-left: 5px solid #10b981;"><div class="stat-num" style="color: #10b981;">{real_subs}</div><p style="color: #64748b; margin: 0; font-size: 14px;">Total Subscribers</p></div>', unsafe_allow_html=True)
-    with col_stat2:
-        st.markdown(f'<div class="stat-card" style="border-left: 5px solid #3b82f6;"><div class="stat-num" style="color: #3b82f6;">{real_views}</div><p style="color: #64748b; margin: 0; font-size: 14px;">Total Views</p></div>', unsafe_allow_html=True)
-
-# ==================== TAB 7: CHANNEL MANAGEMENT (OLD SIMPLE WAY) ====================
-with tab_channel:
-    st.subheader("⚙️ Add Channel (Easiest Way)")
-    st.write("Apna data fill karein aur channel ko bina kisi token jhanjhat ke direct sync karein:")
-    
-    in_key = st.text_input("🔑 Enter YouTube API Key:", value=st.session_state.api_key, type="password")
-    in_id = st.text_input("🆔 Enter Channel ID:", value=st.session_state.channel_id, placeholder="UCxxxxxxxxxxxxxxxxx")
-    in_name = st.text_input("📛 Enter Channel Name (Optional):", value=st.session_state.channel_name)
-    
-    if st.button("🔄 Sync & Save Channel"):
-        if not in_key or not in_id:
-            st.error("API Key aur Channel ID dono daalna zaroori hai!")
-        else:
-            st.session_state.api_key = in_key
-            st.session_state.channel_id = in_id
-            st.session_state.channel_name = in_name
-            st.success("🎉 Channel credentials saved! Dashboard check karein.")
-            time.sleep(1)
-            st.rerun()
+# --- Configuration Tab ---
+st.write("---")
+with st.expander("⚙️ Re-configure Channel Credentials"):
+    in_key = st.text_input("YouTube API Key:", value=st.session_state.api_key, type="password")
+    if st.button("Save Settings"):
+        st.session_state.api_key = in_key
+        st.rerun()
